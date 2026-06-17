@@ -7,10 +7,11 @@
 //     (never recreates them — that would kill focus/drag/color-pickers).
 
 import { derive } from './derive.js';
-import { previewSvg } from './svg.js';
+import { previewSvg, standaloneSvg } from './svg.js';
 import { exportVD } from './export-vd.js';
 import { renderPng } from './export-png.js';
 import { importVector } from './import.js';
+import { createColorField } from './colorpicker.js';
 import {
   sampleDocument,
   defaultCanvas,
@@ -33,6 +34,11 @@ const appState = {
 const undoStack = [];
 const redoStack = [];
 let gestureSnapshot = null;
+
+// Custom color-popover fields (created once in wireControls).
+let matColorField = null;
+let bgColorField = null;
+let strokeColorField = null;
 
 const doc = () => appState.document;
 const selectedLayer = () => doc().layers.find((l) => l.id === appState.ui.selectedLayerId) || null;
@@ -305,14 +311,14 @@ function updateSceneControls() {
   setVal($('canvas-h'), d.canvas.viewportHeight);
   setChecked($('bg-transparent'), d.canvas.exportBackground.transparent);
   $('row-bg-color').style.display = d.canvas.exportBackground.transparent ? 'none' : '';
-  setVal($('bg-color'), d.canvas.exportBackground.color);
+  bgColorField.setValue(d.canvas.exportBackground.color);
   setVal($('png-size'), d.canvas.pngSize);
 }
 
 function updateLayerControls(layer) {
   const m = layer.material;
   setVal($('layer-name'), layer.name);
-  setVal($('mat-color'), m.baseColor.slice(0, 7));
+  matColorField.setValue(m.baseColor.slice(0, 7));
   setVal($('mat-alpha'), m.fillAlpha);
   $('out-alpha').textContent = (+m.fillAlpha).toFixed(2);
   for (const r of document.querySelectorAll('input[name="fillmode"]')) r.checked = r.value === m.fillMode;
@@ -331,7 +337,7 @@ function updateLayerControls(layer) {
 
   const stroke = m.stroke;
   setChecked($('stroke-on'), !!stroke);
-  setVal($('stroke-color'), stroke ? stroke.color.slice(0, 7) : '#000000');
+  strokeColorField.setValue(stroke ? stroke.color.slice(0, 7) : '#000000');
   setVal($('stroke-width'), stroke ? stroke.width : 1);
   setVal($('mat-fillnone'), String(!!m.fillNone));
 }
@@ -357,12 +363,29 @@ function wireControls() {
   liveInput($('canvas-w'), (el) => { doc().canvas.viewportWidth = doc().canvas.width = clampNum(+el.value, 1, 8192, 108); });
   liveInput($('canvas-h'), (el) => { doc().canvas.viewportHeight = doc().canvas.height = clampNum(+el.value, 1, 8192, 108); });
   liveInput($('bg-transparent'), (el) => { doc().canvas.exportBackground.transparent = el.checked; });
-  liveInput($('bg-color'), (el) => { doc().canvas.exportBackground.color = el.value; });
   liveInput($('png-size'), (el) => { doc().canvas.pngSize = clampNum(+el.value, 16, 8192, 1024); });
+
+  // Color fields (custom in-page popover — never clips off-screen).
+  matColorField = createColorField($('mat-color'), {
+    onInput: (hex) => { beginGesture(); withLayer((l) => (l.material.baseColor = hex)); scheduleRender(); },
+    onCommit: commitGesture,
+  });
+  bgColorField = createColorField($('bg-color'), {
+    onInput: (hex) => { beginGesture(); doc().canvas.exportBackground.color = hex; scheduleRender(); },
+    onCommit: commitGesture,
+  });
+  strokeColorField = createColorField($('stroke-color'), {
+    onInput: (hex) => { beginGesture(); withLayer((l) => { if (l.material.stroke) l.material.stroke.color = hex; }); scheduleRender(); },
+    onCommit: commitGesture,
+  });
+
+  // Document name → export/save filename (UI state; not undone).
+  const nameInput = $('doc-name');
+  nameInput.value = appState.ui.projectName;
+  nameInput.addEventListener('input', () => { appState.ui.projectName = nameInput.value; });
 
   // Layer · material
   liveInput($('layer-name'), (el) => { withLayer((l) => (l.name = el.value)); });
-  liveInput($('mat-color'), (el) => { withLayer((l) => (l.material.baseColor = el.value)); });
   liveInput($('mat-alpha'), (el) => { withLayer((l) => (l.material.fillAlpha = +el.value)); });
   for (const r of document.querySelectorAll('input[name="fillmode"]')) {
     r.addEventListener('change', () => commit(() => withLayer((l) => (l.material.fillMode = r.value))));
@@ -384,7 +407,6 @@ function wireControls() {
       else l.material.stroke = null;
     });
   });
-  liveInput($('stroke-color'), (el) => { withLayer((l) => { if (l.material.stroke) l.material.stroke.color = el.value; }); });
   liveInput($('stroke-width'), (el) => { withLayer((l) => { if (l.material.stroke) l.material.stroke.width = +el.value; }); });
   liveInput($('mat-fillnone'), (el) => { withLayer((l) => (l.material.fillNone = el.value === 'true')); });
 
@@ -420,7 +442,7 @@ function wireToolbar() {
 
   $('btn-save').addEventListener('click', () => {
     const json = serializeProject(doc(), appState.ui.projectName);
-    download(new Blob([json], { type: 'application/json' }), `${appState.ui.projectName}.json`);
+    download(new Blob([json], { type: 'application/json' }), exportName('', 'json'));
   });
 
   $('file-import').addEventListener('change', async (e) => {
@@ -470,17 +492,22 @@ async function doExport(action) {
   try {
     if (action === 'vd') {
       const xml = exportVD(derived, d.canvas);
-      download(new Blob([xml], { type: 'text/xml' }), `${appState.ui.projectName}.xml`);
+      download(new Blob([xml], { type: 'text/xml' }), exportName('vd', 'xml'));
       toast('Exported VectorDrawable XML.');
+    } else if (action === 'svg') {
+      const svg = standaloneSvg(derived, d.canvas.viewportWidth, d.canvas.viewportHeight, { background: true });
+      download(new Blob([svg], { type: 'image/svg+xml' }), exportName('svg', 'svg'));
+      toast('Exported SVG.');
     } else if (action === 'project') {
       const json = serializeProject(d, appState.ui.projectName);
-      download(new Blob([json], { type: 'application/json' }), `${appState.ui.projectName}.json`);
+      download(new Blob([json], { type: 'application/json' }), exportName('', 'json'));
       toast('Saved project JSON.');
     } else if (action === 'png-transparent' || action === 'png-bg') {
       const size = d.canvas.pngSize || 1024;
-      const background = action === 'png-bg' ? { transparent: false, color: d.canvas.exportBackground.color } : { transparent: true };
+      const withBg = action === 'png-bg';
+      const background = withBg ? { transparent: false, color: d.canvas.exportBackground.color } : { transparent: true };
       const blob = await renderPng(derived, size, background);
-      download(blob, `${appState.ui.projectName}-${size}.png`);
+      download(blob, exportName(withBg ? 'iwb' : 'iwt', 'png'));
       toast(`Exported PNG (${size}px).`);
     } else if (action === 'share') {
       const url = location.origin + location.pathname + '#' + encodeShareFragment(d, appState.ui.projectName);
@@ -501,6 +528,7 @@ function loadDocument(rawDoc, name) {
   appState.document = normalizeDocument(rawDoc);
   appState.ui.selectedLayerId = null;
   appState.ui.projectName = name || 'icon';
+  $('doc-name').value = appState.ui.projectName;
   undoStack.length = 0;
   redoStack.length = 0;
   gestureSnapshot = null;
@@ -509,6 +537,17 @@ function loadDocument(rawDoc, name) {
 }
 
 // ---- helpers ----
+// Sanitize the document name into a safe download filename base.
+function fileBase() {
+  const safe = (appState.ui.projectName || '').replace(/[\/\\?%*:|"<>\x00-\x1f]+/g, '-').replace(/\s+/g, ' ').trim();
+  return safe || 'icon';
+}
+// Build an export filename: "<name>-<suffix>.<ext>" (no suffix → "<name>.<ext>").
+// Suffixes: vd (VectorDrawable), svg, iwb (png w/ background), iwt (png transparent).
+function exportName(suffix, ext) {
+  return `${fileBase()}${suffix ? '-' + suffix : ''}.${ext}`;
+}
+
 function download(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -569,6 +608,7 @@ function init() {
       toast(res.error, 'error');
     }
   }
+  $('doc-name').value = appState.ui.projectName;
   render();
 }
 

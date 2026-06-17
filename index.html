@@ -9,6 +9,9 @@
 <body>
   <header class="topbar">
     <div class="brand">Icon&nbsp;Recomposer</div>
+    <input id="doc-name" class="doc-name" type="text" placeholder="icon"
+           title="Document name — used for the export / save filename"
+           autocomplete="off" spellcheck="false" />
 
     <div class="toolbar">
       <button id="btn-new" class="tbtn" title="New document">New</button>
@@ -27,6 +30,7 @@
           <button data-export="png-transparent">PNG · transparent</button>
           <button data-export="png-bg">PNG · with background</button>
           <button data-export="vd">VectorDrawable XML</button>
+          <button data-export="svg">SVG</button>
           <button data-export="project">Project JSON</button>
           <button data-export="share">Copy share link</button>
         </div>
@@ -105,7 +109,7 @@
           </label>
           <label class="row" id="row-bg-color">
             <span>Background</span>
-            <input id="bg-color" type="color" />
+            <button id="bg-color" type="button" class="swatch"></button>
           </label>
           <label class="row">
             <span>PNG size</span>
@@ -131,7 +135,7 @@
           <legend>Material</legend>
           <label class="row">
             <span>Base color</span>
-            <input id="mat-color" type="color" />
+            <button id="mat-color" type="button" class="swatch"></button>
           </label>
           <label class="row">
             <span>Opacity</span>
@@ -188,7 +192,7 @@
           </label>
           <label class="row">
             <span>Color</span>
-            <input id="stroke-color" type="color" />
+            <button id="stroke-color" type="button" class="swatch"></button>
           </label>
           <label class="row">
             <span>Width</span>

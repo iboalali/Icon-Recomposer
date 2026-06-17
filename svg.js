@@ -103,8 +103,9 @@ export function previewSvg(derived) {
   return build(derived, null, { background: false });
 }
 
-// Standalone: explicit width/height (the #1 PNG trap if omitted). Background is
-// handled by the canvas in export-png, so we leave the SVG transparent.
-export function standaloneSvg(derived, width, height) {
-  return build(derived, { width, height: height == null ? width : height }, { background: false });
+// Standalone: explicit width/height (the #1 PNG trap if omitted). For PNG the
+// canvas fills the background, so leave the SVG transparent (default). For an
+// SVG-file export, pass { background: true } to bake the chosen bg color in.
+export function standaloneSvg(derived, width, height, opts = {}) {
+  return build(derived, { width, height: height == null ? width : height }, { background: !!opts.background });
 }
