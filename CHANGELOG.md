@@ -7,6 +7,30 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Changed
+
+- **Point (radial) light: Intensity now drives how far the shadow reaches, with
+  a softer falloff.** Turning Intensity up pulls the shadow inward — at the
+  slider's max it reaches and passes the canvas center, so the center and far
+  side go dark; lower intensity keeps the center lit. (The radius was fixed by
+  the light's elevation before and barely responded to Intensity.) The ramp runs
+  highlight → base → a flat shadow plateau, so the transition into the shadow is
+  gradual.
+
+### Fixed
+
+- **Distant (directional) light now embosses as strongly as the point light,
+  and its Intensity slider has a clear effect.** The directional ramp used to
+  span the whole canvas with the neutral base color at its midpoint, so a
+  centered shape sat on that midpoint and barely shaded no matter the intensity.
+  The bevel is now built per shape along the shared light direction and
+  concentrated into the shape interior (it reached full highlight/shadow only at
+  the far corners before), so the shading covers the shape and reads as 3D —
+  matched to the point light's interior contrast. Distant-light icons will look
+  noticeably more embossed than before.
+
 ## [1.5.0] — 2026-06-17
 
 ### Fixed

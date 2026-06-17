@@ -16,6 +16,23 @@ const DEG = Math.PI / 180;
 // more natural; shadow length scales with cot(elevation).
 const A_HI = 0.6;
 const A_LO = 0.9;
+// Directional (distant-light) bevel: fraction of the shape's half-extent over
+// which the ramp goes base→full dark/bright; beyond it the gradient clamps
+// (SVG pad / VD clamp). <1 concentrates the shading into the shape interior so
+// more of its area reads as lit/shaded — without this the dark/bright sit only
+// at the bbox tips and a centered shape looks flat. 0.7 matches the point
+// light's interior contrast. See linearEmboss().
+const BEVEL_REACH = 0.7;
+// Point-light radial emboss. Highlight at the light, then a soft ramp out to a
+// flat dark plateau. Intensity drives how far in the shadow reaches: at the
+// slider's max the plateau begins at the canvas center, so the center (and
+// everything past it) goes dark; lower intensity pushes the plateau outward so
+// the center stays lit. See radialEmboss().
+const INTENSITY_MAX = 2; // must match the Intensity slider max in index.html
+const RADIAL_MIN_LIT = 0.15; // smallest lit radius (fraction of half-extent) so a near-center light still shows a highlight
+const RADIAL_SHOULDER = 0.4; // offset of the base-color (neutral) stop
+const RADIAL_DARK_OFF = 0.85; // offset where full shadow is reached; flat shadow from here to 1 and clamped beyond
+const RADIAL_HI_SOFT = 0.75; // softens the highlight amplitude (shadow stays full so the center reads dark)
 const SHADOW_LEN_K = 0.22; // fraction of canvas half-extent at 45°
 const SHADOW_MAX_LEN = 0.6; // fraction of canvas half-extent
 const SHEEN_COVERAGE = 0.45;
@@ -142,8 +159,8 @@ export function derive(document) {
     } else {
       const gradient =
         light.type === 'point'
-          ? radialEmboss(base, fillAlpha, light, R, sinT, c)
-          : linearEmboss(base, fillAlpha, C, f, vw, vh, c);
+          ? radialEmboss(base, fillAlpha, light, C, R, intensity / INTENSITY_MAX, c)
+          : linearEmboss(base, fillAlpha, box, f, c);
       paths.push({ d, fillRule: layer.fillRule, fill: { type: 'gradient', gradient }, stroke: strokeOut });
     }
 
@@ -169,12 +186,18 @@ export function derive(document) {
 }
 
 // ---- gradient builders ----
-function linearEmboss(base, fillAlpha, C, f, vw, vh, c) {
-  // Project canvas half-extent onto f so the ramp spans the whole canvas →
-  // every layer samples one coherent light.
-  const Rproj = 0.5 * (Math.abs(f[0]) * vw + Math.abs(f[1]) * vh);
-  const dark = [C[0] - f[0] * Rproj, C[1] - f[1] * Rproj];
-  const bright = [C[0] + f[0] * Rproj, C[1] + f[1] * Rproj];
+function linearEmboss(base, fillAlpha, box, f, c) {
+  // Span the ramp across THIS shape's bbox along the light direction (not the
+  // whole canvas). A canvas-wide ramp puts the neutral base color at the canvas
+  // center, so a centered shape sampled almost no contrast and barely shaded as
+  // intensity changed — the dark/bright extremes that move with intensity sat
+  // out at the canvas edges. Per-shape, each shape gets the full
+  // dark→base→highlight bevel and responds to intensity, matching the point
+  // light. The direction f is still the one shared light, so every layer is lit
+  // from the same angle.
+  const reach = (BEVEL_REACH * 0.5 * (Math.abs(f[0]) * box.w + Math.abs(f[1]) * box.h)) || 1;
+  const dark = [box.cx - f[0] * reach, box.cy - f[1] * reach];
+  const bright = [box.cx + f[0] * reach, box.cy + f[1] * reach];
   return {
     id: gradId(),
     kind: 'linear',
@@ -190,8 +213,17 @@ function linearEmboss(base, fillAlpha, C, f, vw, vh, c) {
   };
 }
 
-function radialEmboss(base, fillAlpha, light, R, sinT, c) {
-  const r = Math.max(1, R * (0.5 + 0.7 * sinT));
+function radialEmboss(base, fillAlpha, light, C, R, ni, c) {
+  // The full-shadow plateau (offset RADIAL_DARK_OFF..1, clamped beyond) begins
+  // at `darkBegin` from the light: the canvas center at max intensity, pushed
+  // outward by up to a half-extent at low intensity. So turning Intensity up
+  // pulls the shadow in until the center goes dark; the long ramp (offset
+  // 0..RADIAL_DARK_OFF) keeps the transition soft. userSpaceOnUse + pad/clamp →
+  // identical in preview, PNG, and VD.
+  const distToCenter = Math.hypot(light.position.x - C[0], light.position.y - C[1]);
+  const darkBegin = Math.max(RADIAL_MIN_LIT * R, distToCenter + (1 - clamp01(ni)) * R);
+  const r = Math.max(1, darkBegin / RADIAL_DARK_OFF);
+  const dark = scaleAlpha(mix(base, BLACK, c * A_LO), fillAlpha);
   return {
     id: gradId(),
     kind: 'radial',
@@ -199,8 +231,11 @@ function radialEmboss(base, fillAlpha, light, R, sinT, c) {
     cy: light.position.y,
     r,
     stops: [
-      { offset: 0, color: scaleAlpha(mix(base, WHITE, c * A_HI), fillAlpha) },
-      { offset: 1, color: scaleAlpha(mix(base, BLACK, c * A_LO), fillAlpha) },
+      // highlight → base (neutral) → full-shadow plateau
+      { offset: 0, color: scaleAlpha(mix(base, WHITE, c * A_HI * RADIAL_HI_SOFT), fillAlpha) },
+      { offset: RADIAL_SHOULDER, color: scaleAlpha(withAlpha(base, base.a), fillAlpha) },
+      { offset: RADIAL_DARK_OFF, color: dark },
+      { offset: 1, color: dark },
     ],
   };
 }
