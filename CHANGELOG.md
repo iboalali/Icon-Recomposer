@@ -7,6 +7,16 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Added
+
+- **Anonymous usage & error events** sent to TelemetryDeck via a tiny
+  dependency-free signal sender (alongside the existing pageview): `export` (with
+  the format), `open`, `import`, `new`, `save`, `undo`, `redo`, and `error`
+  (explicit export/import/open failures plus any uncaught runtime error). No
+  cookies; `localhost`/`file://` are flagged as test mode.
+
 ## [1.3.0] — 2026-06-17
 
 ### Added

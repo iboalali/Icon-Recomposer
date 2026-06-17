@@ -13,6 +13,7 @@ import { exportVD } from './export-vd.js';
 import { renderPng } from './export-png.js';
 import { importVector } from './import.js';
 import { createColorField } from './colorpicker.js';
+import { signal as tdSignal, reportError as tdError } from './telemetry.js';
 import {
   APP_VERSION,
   newId,
@@ -88,6 +89,7 @@ function undo() {
   reconcileSelection();
   updateHistoryButtons();
   scheduleRender();
+  tdSignal('undo');
 }
 function redo() {
   if (!redoStack.length) return;
@@ -96,6 +98,7 @@ function redo() {
   reconcileSelection();
   updateHistoryButtons();
   scheduleRender();
+  tdSignal('redo');
 }
 function reconcileSelection() {
   const ids = doc().layers.map((l) => l.id);
@@ -793,6 +796,7 @@ function wireToolbar() {
     if (doc().layers.length && !confirm('Start a new document? Unsaved changes will be lost.')) return;
     loadDocument({ canvas: defaultCanvas(), light: defaultLight(), layers: [] }, 'icon');
     toast('New document.');
+    tdSignal('new');
   });
 
   // Both pickers sniff the file and route by content, so a project opened via
@@ -804,6 +808,7 @@ function wireToolbar() {
   $('btn-save').addEventListener('click', () => {
     const json = serializeProject(doc(), appState.ui.projectName);
     download(new Blob([json], { type: 'application/json' }), exportName('', 'json'));
+    tdSignal('save');
   });
 
   // Export dropdown
@@ -845,12 +850,13 @@ async function handleFile(e, prefer) {
 
   if (kind === 'project') {
     const res = parseProject(text);
-    if (!res.ok) return toast(res.error, 'error');
+    if (!res.ok) { tdError(res.error, 'open'); return toast(res.error, 'error'); }
     loadDocument(res.document, res.name);
     toast(prefer === 'vector' ? `That's a project file — opened "${res.name}".` : `Opened "${res.name}".`);
+    tdSignal('open');
   } else {
     const res = importVector(text, file.name);
-    if (!res.ok) return toast(res.error, 'error');
+    if (!res.ok) { tdError(res.error, 'import'); return toast(res.error, 'error'); }
     importLayers(res, file.name, prefer === 'project');
   }
 }
@@ -875,6 +881,7 @@ function importLayers(res, filename, viaOpen) {
   toast(`${prefix}Imported ${res.layers.length} layer${res.layers.length === 1 ? '' : 's'} from ${filename}.` + (warn ? ` (${res.warnings.length} warning${res.warnings.length === 1 ? '' : 's'})` : ''), warn ? 'warn' : '');
   if (warn) console.warn('Import warnings:', res.warnings);
   scheduleRender();
+  tdSignal('import', { layers: res.layers.length });
 }
 
 async function doExport(action) {
@@ -910,9 +917,12 @@ async function doExport(action) {
       await navigator.clipboard.writeText(url);
       toast('Share link copied to clipboard.');
     }
+    // Reached only on success (failures throw; share-too-large returns early).
+    tdSignal('export', { format: action });
   } catch (err) {
     console.error(err);
     toast('Export failed: ' + (err.message || err), 'error');
+    tdError(err, 'export:' + action);
   }
 }
 
@@ -1009,6 +1019,7 @@ async function init() {
       toast(`Loaded shared "${res.name}".`);
     } else if (res && !res.ok) {
       toast(res.error, 'error');
+      tdError(res.error, 'share-link');
     }
   } else {
     try {

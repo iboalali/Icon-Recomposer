@@ -53,6 +53,7 @@ authoring model ── derive() ──▶ derived model (flat paths + gradients)
 | `color.js` | color parse/format + **OKLab** `mix(base, white/black, k)`; `#AARRGGBB` formatter |
 | `path.js` | **hand-rolled** path parse → normalize (arcs→béziers) → transform bake → bbox → serialize |
 | `colorpicker.js` | custom in-page color popover (native `<input type=color>` clipped off-screen) |
+| `telemetry.js` | dependency-free TelemetryDeck custom-signal sender (export/open/import/new/save/undo/redo + errors); pairs with the Web SDK pageview `<script>` in `index.html` |
 
 ### Implemented behavior beyond PLAN.md
 
