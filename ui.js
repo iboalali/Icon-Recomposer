@@ -459,30 +459,15 @@ function wireToolbar() {
     toast('New document.');
   });
 
-  $('file-open').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    e.target.value = '';
-    if (!file) return;
-    const text = await file.text();
-    const res = parseProject(text);
-    if (!res.ok) return toast(res.error, 'error');
-    loadDocument(res.document, res.name);
-    toast(`Opened "${res.name}".`);
-  });
+  // Both pickers sniff the file and route by content, so a project opened via
+  // Import (or a vector "opened") still does the right thing. `prefer` only
+  // breaks ties for ambiguous files.
+  $('file-open').addEventListener('change', (e) => handleFile(e, 'project'));
+  $('file-import').addEventListener('change', (e) => handleFile(e, 'vector'));
 
   $('btn-save').addEventListener('click', () => {
     const json = serializeProject(doc(), appState.ui.projectName);
     download(new Blob([json], { type: 'application/json' }), exportName('', 'json'));
-  });
-
-  $('file-import').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    e.target.value = '';
-    if (!file) return;
-    const text = await file.text();
-    const res = importVector(text, file.name);
-    if (!res.ok) return toast(res.error, 'error');
-    importLayers(res, file.name);
   });
 
   // Export dropdown
@@ -498,7 +483,43 @@ function wireToolbar() {
   });
 }
 
-function importLayers(res, filename) {
+// A project file is JSON with our magic id; a vector is SVG/VD markup.
+function looksLikeProject(text, filename) {
+  if (/"format"\s*:\s*"icon-emboss"/.test(text)) return true;
+  if (/\.json$/i.test(filename)) {
+    try { return JSON.parse(text) && typeof JSON.parse(text) === 'object'; } catch (_) { return false; }
+  }
+  return false;
+}
+function looksLikeVector(text, filename) {
+  return /<\s*svg[\s>]/i.test(text) || /<\s*vector[\s>]/i.test(text) || /\.(svg|xml)$/i.test(filename);
+}
+
+// Single entry for both Open and Import — detect kind, route, and tell the user
+// when it didn't match the button they pressed (Open vs Import, PLAN §7).
+async function handleFile(e, prefer) {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const text = await file.text();
+
+  const isProject = looksLikeProject(text, file.name);
+  const isVector = !isProject && looksLikeVector(text, file.name);
+  const kind = isProject ? 'project' : isVector ? 'vector' : prefer;
+
+  if (kind === 'project') {
+    const res = parseProject(text);
+    if (!res.ok) return toast(res.error, 'error');
+    loadDocument(res.document, res.name);
+    toast(prefer === 'vector' ? `That's a project file — opened "${res.name}".` : `Opened "${res.name}".`);
+  } else {
+    const res = importVector(text, file.name);
+    if (!res.ok) return toast(res.error, 'error');
+    importLayers(res, file.name, prefer === 'project');
+  }
+}
+
+function importLayers(res, filename, viaOpen) {
   commit(() => {
     const d = doc();
     if (d.layers.length === 0 && res.viewport) {
@@ -510,7 +531,8 @@ function importLayers(res, filename) {
   });
   if (res.layers.length) appState.ui.selectedLayerId = res.layers[0].id;
   const warn = res.warnings && res.warnings.length;
-  toast(`Imported ${res.layers.length} layer${res.layers.length === 1 ? '' : 's'} from ${filename}.` + (warn ? ` (${res.warnings.length} warning${res.warnings.length === 1 ? '' : 's'})` : ''), warn ? 'warn' : '');
+  const prefix = viaOpen ? `That's a vector file — ` : '';
+  toast(`${prefix}Imported ${res.layers.length} layer${res.layers.length === 1 ? '' : 's'} from ${filename}.` + (warn ? ` (${res.warnings.length} warning${res.warnings.length === 1 ? '' : 's'})` : ''), warn ? 'warn' : '');
   if (warn) console.warn('Import warnings:', res.warnings);
   scheduleRender();
 }
