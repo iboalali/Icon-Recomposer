@@ -16,6 +16,8 @@ into saved project files.
   the format), `open`, `import`, `new`, `save`, `undo`, `redo`, and `error`
   (explicit export/import/open failures plus any uncaught runtime error). No
   cookies; `localhost`/`file://` are flagged as test mode.
+- A **Privacy** link in the top bar pointing to the app's privacy policy
+  (with UTM attribution); clicking it sends a `privacyLinkClicked` usage signal.
 
 ## [1.3.0] — 2026-06-17
 

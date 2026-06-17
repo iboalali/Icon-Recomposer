@@ -792,6 +792,13 @@ function wireToolbar() {
   $('btn-undo').addEventListener('click', undo);
   $('btn-redo').addEventListener('click', redo);
 
+  // Privacy link opens the policy in a new tab; record the click as an
+  // anonymous TelemetryDeck signal via our own sender (the Web SDK exposes no
+  // global, so the previous window.td call was a no-op).
+  $('privacy-link').addEventListener('click', () => {
+    tdSignal('privacyLinkClicked');
+  });
+
   $('btn-new').addEventListener('click', () => {
     if (doc().layers.length && !confirm('Start a new document? Unsaved changes will be lost.')) return;
     loadDocument({ canvas: defaultCanvas(), light: defaultLight(), layers: [] }, 'icon');
