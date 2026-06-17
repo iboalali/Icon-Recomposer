@@ -8,7 +8,9 @@ The app is built and deployed. `PLAN.md` remains the authoritative design spec �
 
 The repo is on GitHub (`git@github.com:iboalali/Icon-Recomposer.git`) and deployed via **GitHub Pages** (deploy-from-branch: `main` / root). Live at **https://iboalali.com/Icon-Recomposer/** — every push to `main` auto-redeploys.
 
-**Versioning:** the single source of truth is `APP_VERSION` in `model.js` — it's shown in the top bar and written into saved project files (`app` field). When shipping a notable change, bump `APP_VERSION` and add a matching entry to `CHANGELOG.md` (Keep a Changelog format). Bump `schemaVersion` (also `model.js`) only when the document shape changes, and add a migration step.
+**Changelog (required):** every **user-facing** change — a new feature, a behavior change, a UI tweak, a bug fix a user would notice — **must** add an entry under `## [Unreleased]` in `CHANGELOG.md` (Keep a Changelog format: `Added` / `Changed` / `Fixed` / `Removed`), in the **same commit** as the change. Internal-only work (refactors, comments, tests/tooling, doc edits) does not need an entry. If in doubt, add one. When unsure whether a change is user-facing, ask: "would someone using the app notice?"
+
+**Versioning:** the single source of truth is `APP_VERSION` in `model.js` — shown in the top bar and written into saved project files (`app` field). To **release**, move the `[Unreleased]` items under a new `## [x.y.z] — YYYY-MM-DD` heading, bump `APP_VERSION` to match, commit, and tag `vx.y.z` (annotated). Bump `schemaVersion` (also `model.js`) only when the document shape changes, and add a migration step.
 
 ## What this is
 
