@@ -448,13 +448,10 @@ function onCanvasPointerDown(e) {
   if (e.button != null && e.button !== 0) return; // primary button / touch only
   const v = viewportFromEvent(e);
   const modifier = e.ctrlKey || e.metaKey || e.shiftKey;
-
-  // Plain press on a selected shape → drag the whole selection.
-  if (!modifier && e.target.classList && e.target.classList.contains('sel-hit')) {
-    startLayerDrag(e, v);
-    return;
-  }
-
+  // Always hit-test the actual layer geometry (front-most first), NOT the
+  // selection overlay's sel-hit. A selected layer's sel-hit covers its whole
+  // shape, so trusting e.target would mask any layer it overlaps and you could
+  // never click-select them.
   const hitId = layerAt(v.x, v.y);
 
   // With a modifier, the canvas mirrors the layer list (toggle / range select).
@@ -464,13 +461,17 @@ function onCanvasPointerDown(e) {
   }
 
   if (hitId) {
-    if (!appState.ui.selectedLayerIds.includes(hitId)) {
+    if (appState.ui.selectedLayerIds.includes(hitId)) {
+      // Grabbed an already-selected shape → drag the whole selection.
+      startLayerDrag(e, v);
+    } else {
+      // Clicked a different (front-most) layer → select it, then drag it.
       appState.ui.selectedLayerIds = [hitId];
       appState.ui.primaryLayerId = hitId;
       appState.ui.selectAnchorId = hitId;
+      startLayerDrag(e, v);
+      scheduleRender();
     }
-    startLayerDrag(e, v);
-    scheduleRender();
   } else if (appState.ui.selectedLayerIds.length) {
     selectLayer(null); // clicked empty canvas → deselect
   }
@@ -613,6 +614,9 @@ function updateLayerControls(layer, count) {
   setChecked($('shadow-on'), layer.castsShadow.enabled);
   setVal($('shadow-opacity'), layer.castsShadow.opacity);
   setVal($('shadow-spread'), layer.castsShadow.spread);
+  const dist = layer.castsShadow.distance == null ? 1 : layer.castsShadow.distance;
+  setVal($('shadow-distance'), dist);
+  $('out-shadow-distance').textContent = (+dist).toFixed(2) + '×';
   setChecked($('shadow-clip'), layer.castsShadow.clipToLayers !== false);
 
   const stroke = m.stroke;
@@ -729,6 +733,10 @@ function wireControls() {
   liveInput($('shadow-on'), (el) => { withSelected((l) => (l.castsShadow.enabled = el.checked)); });
   liveInput($('shadow-opacity'), (el) => { withSelected((l) => (l.castsShadow.opacity = +el.value)); });
   liveInput($('shadow-spread'), (el) => { withSelected((l) => (l.castsShadow.spread = +el.value)); });
+  liveInput($('shadow-distance'), (el) => {
+    $('out-shadow-distance').textContent = (+el.value).toFixed(2) + '×';
+    withSelected((l) => (l.castsShadow.distance = +el.value));
+  });
   liveInput($('shadow-clip'), (el) => { withSelected((l) => (l.castsShadow.clipToLayers = el.checked)); });
 
   // Layer · stroke
@@ -982,13 +990,17 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---- init ----
-function init() {
+const DEFAULT_PROJECT_URL = 'assets/' + encodeURIComponent('app icon.json');
+
+async function init() {
   $('app-version').textContent = 'v' + APP_VERSION;
   wireControls();
   wireToolbar();
   updateHistoryButtons();
 
-  // Load from share link if present.
+  // Load from share link if present; otherwise open the bundled default
+  // project ("app icon"), falling back to the built-in sample document if it
+  // can't be fetched (e.g. the assets aren't available).
   if (location.hash && location.hash.indexOf('doc=') >= 0) {
     const res = decodeShareFragment(location.hash);
     if (res && res.ok) {
@@ -997,6 +1009,19 @@ function init() {
       toast(`Loaded shared "${res.name}".`);
     } else if (res && !res.ok) {
       toast(res.error, 'error');
+    }
+  } else {
+    try {
+      const resp = await fetch(DEFAULT_PROJECT_URL);
+      if (resp.ok) {
+        const parsed = parseProject(await resp.text());
+        if (parsed.ok) {
+          appState.document = parsed.document;
+          appState.ui.projectName = parsed.name;
+        }
+      }
+    } catch (_) {
+      /* keep the built-in sample document */
     }
   }
   $('doc-name').value = appState.ui.projectName;

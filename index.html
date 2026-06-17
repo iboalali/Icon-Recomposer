@@ -4,11 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Icon Recomposer</title>
+  <!-- Anonymous, privacy-friendly usage analytics (TelemetryDeck Web SDK).
+       Sends one pageview per load; no cookies. Signals from localhost/file
+       are auto-flagged as test mode. -->
+  <script src="https://cdn.telemetrydeck.com/websdk/telemetrydeck.min.js"
+          data-app-id="11D5C3D9-D37D-4A87-B22D-B3DAD39E31D8"></script>
+  <link rel="icon" type="image/png" href="assets/favicon-64.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Icon&nbsp;Recomposer <span class="version" id="app-version"></span></div>
+    <div class="brand"><img class="brand-icon" src="assets/brand-64.png" alt="" />Icon&nbsp;Recomposer <span class="version" id="app-version"></span></div>
     <input id="doc-name" class="doc-name" type="text" placeholder="icon"
            title="Document name — used for the export / save filename"
            autocomplete="off" spellcheck="false" />
@@ -226,6 +232,12 @@
           <label class="row">
             <span>Spread</span>
             <input id="shadow-spread" type="range" min="0" max="1" step="0.01" />
+          </label>
+          <label class="row">
+            <span>Distance</span>
+            <input id="shadow-distance" type="range" min="0" max="3" step="0.05"
+                   title="How far the shadow is thrown (the layer's apparent height); 1 = the auto length from the light" />
+            <output id="out-shadow-distance"></output>
           </label>
           <label class="row">
             <span>Clip to layers</span>

@@ -7,6 +7,28 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [1.3.0] — 2026-06-17
+
+### Added
+
+- **Per-layer shadow distance** — a Distance control in the Cast shadow section
+  sets how far each layer throws its shadow (its apparent height above the
+  surface). It multiplies the automatic length from the light, so `1×` keeps the
+  previous look and higher values lift the layer further off the surface.
+- The app now **opens on a bundled default project** (the "app icon") instead of
+  the built-in sample, and shows that **app icon next to the title** in the top
+  bar plus as the browser **favicon**.
+- **Anonymous usage analytics** via the privacy-friendly TelemetryDeck Web SDK —
+  one pageview per load, no cookies. Signals from `localhost`/`file://` are
+  automatically flagged as test mode.
+
+### Fixed
+
+- Clicking the canvas could not switch the selection between overlapping layers:
+  once a layer was selected, its (invisible) drag target covered its shape and
+  intercepted clicks, so an overlapping layer underneath or on top couldn't be
+  click-selected. Selection now hit-tests the actual layer geometry.
+
 ## [1.2.1] — 2026-06-17
 
 ### Fixed

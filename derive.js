@@ -99,7 +99,10 @@ export function derive(document) {
         C,
         R,
         cotT,
-        len: clamp(SHADOW_LEN_K * cotT, 0, SHADOW_MAX_LEN) * R,
+        // Auto throw distance from the light elevation, scaled by the layer's
+        // own Distance multiplier (its apparent height above the surface).
+        len: clamp(SHADOW_LEN_K * cotT, 0, SHADOW_MAX_LEN) * R *
+          (layer.castsShadow.distance == null ? 1 : Math.max(0, layer.castsShadow.distance)),
         cfg: layer.castsShadow,
       });
       if (sh) {
