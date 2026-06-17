@@ -11,6 +11,12 @@ into saved project files.
 
 ### Added
 
+- **Per-layer scale** — a Scale control in the Layer panel resizes the selected
+  layer(s) in place by a percentage (`100` = original), scaling about each
+  layer's own center. Content may extend past the canvas edge; nothing is
+  clipped and the original path data is preserved (the scale is stored as a
+  non-destructive layer transform in the project file). A link toggle unlocks
+  independent X / Y scaling.
 - **Anonymous usage & error events** sent to TelemetryDeck via a tiny
   dependency-free signal sender (alongside the existing pageview): `export` (with
   the format), `open`, `import`, `new`, `save`, `undo`, `redo`, and `error`

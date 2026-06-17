@@ -187,6 +187,30 @@
         </fieldset>
 
         <fieldset class="group">
+          <legend>Scale</legend>
+          <div class="row">
+            <span>Link X / Y</span>
+            <button id="scale-link" type="button" class="link" aria-pressed="true"
+                    title="Link X and Y scale (uniform). Click to unlock independent axes.">🔗 Linked</button>
+          </div>
+          <label class="row" id="row-scale">
+            <span>Scale %</span>
+            <input id="layer-scale" type="number" step="1" min="1" class="num"
+                   title="Resize the layer in place. 100 = original. The layer may extend off-canvas; its path data is preserved." />
+          </label>
+          <label class="row" id="row-scale-x" hidden>
+            <span>X %</span>
+            <input id="layer-scale-x" type="number" step="1" min="1" class="num"
+                   title="Horizontal scale in place. 100 = original (may go off-canvas)." />
+          </label>
+          <label class="row" id="row-scale-y" hidden>
+            <span>Y %</span>
+            <input id="layer-scale-y" type="number" step="1" min="1" class="num"
+                   title="Vertical scale in place. 100 = original (may go off-canvas)." />
+          </label>
+        </fieldset>
+
+        <fieldset class="group">
           <legend>Material</legend>
           <label class="row">
             <span>Base color</span>
