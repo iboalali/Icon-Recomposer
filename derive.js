@@ -252,6 +252,15 @@ function resolveStroke(stroke) {
   };
 }
 
+// The baked outline of a single layer (transform applied), in viewport space.
+// Used by the UI to draw a selection marquee — not part of any export.
+export function bakedOutline(layer) {
+  if (!layer || !layer.pathData) return '';
+  let segs = P.parse(layer.pathData);
+  if (layer.transform) segs = P.transform(segs, layerMatrix(layer.transform));
+  return P.serialize(segs);
+}
+
 // VectorDrawable group transform order: scale, rotate, translate, around pivot.
 function layerMatrix(t) {
   const px = t.pivotX || 0;

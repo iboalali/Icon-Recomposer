@@ -6,7 +6,7 @@
 //   - controlled inputs (in index.html): built ONCE; render only updates .value
 //     (never recreates them — that would kill focus/drag/color-pickers).
 
-import { derive } from './derive.js';
+import { derive, bakedOutline } from './derive.js';
 import { previewSvg, standaloneSvg } from './svg.js';
 import { exportVD } from './export-vd.js';
 import { renderPng } from './export-png.js';
@@ -123,7 +123,37 @@ function render() {
   $('canvas-wrap').style.background = bg.transparent ? '' : bg.color;
 
   positionLightHandle();
+  updateSelectionOverlay();
   updateInspector();
+}
+
+// ---- selection marquee ----
+// Outlines the selected layer over the preview. Cached on (id + geometry) so
+// the marching-ants animation isn't reset every frame during a light drag
+// (only gradients change then, not the path geometry).
+let lastSelKey = null; // sentinel: null ≠ the empty-selection key, so the first
+// render always applies (otherwise an unselected start never gets hidden).
+function updateSelectionOverlay() {
+  const ov = $('selection-overlay');
+  const d = doc();
+  ov.setAttribute('viewBox', `0 0 ${d.canvas.viewportWidth} ${d.canvas.viewportHeight}`);
+
+  const layer = selectedLayer();
+  const outline = layer && layer.visible ? bakedOutline(layer) : '';
+  const key = outline ? layer.id + '|' + outline : '';
+  if (key === lastSelKey) return;
+  lastSelKey = key;
+
+  // Toggle the `hidden` ATTRIBUTE (SVGElement has no `.hidden` IDL property,
+  // so setting el.hidden wouldn't reflect to CSS).
+  if (!outline) {
+    ov.setAttribute('hidden', '');
+    ov.innerHTML = '';
+    return;
+  }
+  const dEsc = outline.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  ov.removeAttribute('hidden');
+  ov.innerHTML = `<path class="sel-halo" fill="none" d="${dEsc}"/><path class="sel-line" fill="none" d="${dEsc}"/>`;
 }
 
 // ---- layer list (derived view) ----
