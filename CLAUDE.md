@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status: pre-implementation
 
-There is **no code yet** — only `PLAN.md`, the authoritative design spec. Read it before writing anything; this file is a fast orientation, `PLAN.md` is the detail. There is no `package.json`, build system, test suite, or git repo at this point.
+There is **no app code yet** — only `PLAN.md` (the authoritative design spec) and a placeholder `index.html` landing page. Read `PLAN.md` before writing anything; this file is a fast orientation, `PLAN.md` is the detail. There is no `package.json`, build system, or test suite at this point.
+
+The repo is on GitHub (`git@github.com:iboalali/Icon-Recomposer.git`) and deployed via **GitHub Pages** (deploy-from-branch: `main` / root). Live at **https://iboalali.com/Icon-Recomposer/** — every push to `main` auto-redeploys. The placeholder `index.html` will be replaced by the real app (same root path).
 
 ## What this is
 
