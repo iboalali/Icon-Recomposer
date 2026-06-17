@@ -4,40 +4,210 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Icon Recomposer</title>
-  <style>
-    :root { color-scheme: light dark; }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: #0f1115;
-      color: #e6e8ec;
-      padding: 2rem;
-    }
-    main { max-width: 36rem; text-align: center; }
-    h1 { font-size: 2rem; margin: 0 0 .5rem; letter-spacing: -0.02em; }
-    p { color: #9aa0aa; margin: .5rem 0; }
-    .badge {
-      display: inline-block;
-      margin-top: 1.5rem;
-      padding: .35rem .8rem;
-      border: 1px solid #2a2f3a;
-      border-radius: 999px;
-      font-size: .8rem;
-      color: #c0c5cf;
-    }
-  </style>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <main>
-    <h1>Icon Recomposer</h1>
-    <p>A browser tool that loads vector artwork (SVG or Android VectorDrawable),
-       applies a subtle 3D emboss driven by a single movable light, and exports
-       to PNG, VectorDrawable XML, or a re-editable project.</p>
-    <p class="badge">In development</p>
+  <header class="topbar">
+    <div class="brand">Icon&nbsp;Recomposer</div>
+
+    <div class="toolbar">
+      <button id="btn-new" class="tbtn" title="New document">New</button>
+
+      <label class="tbtn" for="file-open">Open</label>
+      <input id="file-open" type="file" accept=".json,application/json" hidden />
+
+      <button id="btn-save" class="tbtn" title="Save project (.json)">Save</button>
+
+      <label class="tbtn" for="file-import">Import</label>
+      <input id="file-import" type="file" accept=".svg,.xml,image/svg+xml,text/xml" hidden />
+
+      <div class="dropdown">
+        <button id="btn-export" class="tbtn" aria-haspopup="true">Export ▾</button>
+        <div class="menu" id="export-menu" hidden>
+          <button data-export="png-transparent">PNG · transparent</button>
+          <button data-export="png-bg">PNG · with background</button>
+          <button data-export="vd">VectorDrawable XML</button>
+          <button data-export="project">Project JSON</button>
+          <button data-export="share">Copy share link</button>
+        </div>
+      </div>
+
+      <span class="spacer"></span>
+      <button id="btn-undo" class="tbtn icon" title="Undo (Ctrl+Z)">⟲</button>
+      <button id="btn-redo" class="tbtn icon" title="Redo (Ctrl+Shift+Z)">⟳</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- LEFT: layers -->
+    <aside class="panel" id="layers-panel">
+      <div class="panel-head">
+        <h2>Layers</h2>
+      </div>
+      <ul id="layer-list" class="layer-list"></ul>
+      <p class="hint">Top of the list paints last (front-most).</p>
+    </aside>
+
+    <!-- CENTER: canvas -->
+    <section class="stage" id="stage">
+      <div class="canvas-wrap" id="canvas-wrap">
+        <div class="checker" id="checker"></div>
+        <div class="preview" id="preview"></div>
+        <div class="light-overlay" id="light-overlay">
+          <div class="light-handle" id="light-handle" title="Drag to move the light"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT: inspector -->
+    <aside class="panel" id="inspector">
+      <!-- Scene panel (nothing selected) -->
+      <div id="scene-panel">
+        <div class="panel-head"><h2>Scene</h2></div>
+
+        <fieldset class="group">
+          <legend>Light</legend>
+          <label class="row">
+            <span>Type</span>
+            <select id="light-type">
+              <option value="point">Point (radial)</option>
+              <option value="distant">Distant (linear)</option>
+            </select>
+          </label>
+          <label class="row" id="row-azimuth">
+            <span>Azimuth</span>
+            <input id="light-azimuth" type="range" min="0" max="360" step="1" />
+            <output id="out-azimuth"></output>
+          </label>
+          <label class="row">
+            <span>Elevation</span>
+            <input id="light-elevation" type="range" min="0" max="90" step="1" />
+            <output id="out-elevation"></output>
+          </label>
+          <label class="row">
+            <span>Intensity</span>
+            <input id="light-intensity" type="range" min="0" max="2" step="0.01" />
+            <output id="out-intensity"></output>
+          </label>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Canvas</legend>
+          <label class="row">
+            <span>Viewport</span>
+            <input id="canvas-w" type="number" min="1" step="1" class="num" />
+            <span class="times">×</span>
+            <input id="canvas-h" type="number" min="1" step="1" class="num" />
+          </label>
+          <label class="row">
+            <span>Transparent</span>
+            <input id="bg-transparent" type="checkbox" />
+          </label>
+          <label class="row" id="row-bg-color">
+            <span>Background</span>
+            <input id="bg-color" type="color" />
+          </label>
+          <label class="row">
+            <span>PNG size</span>
+            <input id="png-size" type="number" min="16" step="1" class="num" />
+            <span class="unit">px</span>
+          </label>
+        </fieldset>
+      </div>
+
+      <!-- Layer panel (a layer is selected) -->
+      <div id="layer-panel" hidden>
+        <div class="panel-head">
+          <h2>Layer</h2>
+          <button id="layer-deselect" class="link" title="Back to scene">Scene ▸</button>
+        </div>
+
+        <label class="row">
+          <span>Name</span>
+          <input id="layer-name" type="text" />
+        </label>
+
+        <fieldset class="group">
+          <legend>Material</legend>
+          <label class="row">
+            <span>Base color</span>
+            <input id="mat-color" type="color" />
+          </label>
+          <label class="row">
+            <span>Opacity</span>
+            <input id="mat-alpha" type="range" min="0" max="1" step="0.01" />
+            <output id="out-alpha"></output>
+          </label>
+          <div class="row">
+            <span>Fill</span>
+            <div class="seg">
+              <label><input type="radio" name="fillmode" value="solid" /> Solid</label>
+              <label><input type="radio" name="fillmode" value="embossed" /> Embossed</label>
+            </div>
+          </div>
+          <label class="row" id="row-emboss">
+            <span>Emboss</span>
+            <input id="mat-emboss" type="range" min="0" max="2" step="0.01" />
+            <output id="out-emboss"></output>
+          </label>
+          <label class="row" id="row-sheen">
+            <span>Sheen</span>
+            <input id="mat-sheen-on" type="checkbox" />
+            <input id="mat-sheen" type="range" min="0" max="1" step="0.01" />
+          </label>
+          <label class="row">
+            <span>Fill rule</span>
+            <select id="mat-fillrule">
+              <option value="nonZero">nonZero</option>
+              <option value="evenOdd">evenOdd</option>
+            </select>
+          </label>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Cast shadow</legend>
+          <label class="row">
+            <span>Enabled</span>
+            <input id="shadow-on" type="checkbox" />
+          </label>
+          <label class="row">
+            <span>Opacity</span>
+            <input id="shadow-opacity" type="range" min="0" max="1" step="0.01" />
+          </label>
+          <label class="row">
+            <span>Spread</span>
+            <input id="shadow-spread" type="range" min="0" max="1" step="0.01" />
+          </label>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Stroke (passthrough)</legend>
+          <label class="row">
+            <span>Enabled</span>
+            <input id="stroke-on" type="checkbox" />
+          </label>
+          <label class="row">
+            <span>Color</span>
+            <input id="stroke-color" type="color" />
+          </label>
+          <label class="row">
+            <span>Width</span>
+            <input id="stroke-width" type="number" min="0" step="0.1" class="num" />
+          </label>
+          <label class="row">
+            <span>Fill</span>
+            <select id="mat-fillnone">
+              <option value="false">Filled</option>
+              <option value="true">None (stroke only)</option>
+            </select>
+          </label>
+        </fieldset>
+      </div>
+    </aside>
   </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="ui.js"></script>
 </body>
 </html>
