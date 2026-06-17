@@ -51,6 +51,7 @@ export function derive(document) {
   const sinT = Math.sin(theta);
   const cotT = cosT / sinT;
   const intensity = light.intensity;
+  const lightOff = light.type === 'off'; // no lighting: flat fills, no sheen/shadow
 
   const paths = [];
 
@@ -77,10 +78,11 @@ export function derive(document) {
     }
 
     const embossed = mat.fillMode === 'embossed';
-    const c = clamp01(intensity * (mat.embossIntensity == null ? 1 : mat.embossIntensity) * cosT);
+    // Light off → contrast 0, so the lit fill below falls through to a flat fill.
+    const c = lightOff ? 0 : clamp01(intensity * (mat.embossIntensity == null ? 1 : mat.embossIntensity) * cosT);
 
-    // 1) Cast shadow (drawn underneath).
-    if (layer.castsShadow && layer.castsShadow.enabled) {
+    // 1) Cast shadow (drawn underneath) — a light effect, skipped when off.
+    if (!lightOff && layer.castsShadow && layer.castsShadow.enabled) {
       const sh = buildShadow(segs, box, shapeCenter, {
         light,
         f,
@@ -109,8 +111,8 @@ export function derive(document) {
       paths.push({ d, fillRule: layer.fillRule, fill: { type: 'gradient', gradient }, stroke: strokeOut });
     }
 
-    // 3) Sheen (drawn on top, own path; VD clip-path is aliased).
-    if (embossed && mat.sheen && mat.sheen.enabled && mat.sheen.strength > 0) {
+    // 3) Sheen (drawn on top, own path; VD clip-path is aliased) — off when no light.
+    if (!lightOff && embossed && mat.sheen && mat.sheen.enabled && mat.sheen.strength > 0) {
       const gradient =
         light.type === 'point'
           ? sheenRadial(light, box, mat.sheen.strength)

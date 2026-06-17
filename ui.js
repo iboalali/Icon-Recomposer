@@ -261,6 +261,7 @@ function applyLightFromViewport(vx, vy) {
   }
 }
 function onDragStart(e) {
+  if (doc().light.type === 'off') return; // nothing to drag when the light is off
   dragging = true;
   overlay.setPointerCapture(e.pointerId);
   beginGesture();
@@ -288,6 +289,14 @@ overlay.addEventListener('pointercancel', onDragEnd);
 
 function positionLightHandle() {
   const d = doc();
+  // Hide the handle (and stop the crosshair cursor) when the light is off.
+  if (d.light.type === 'off') {
+    handle.style.display = 'none';
+    overlay.style.cursor = 'default';
+    return;
+  }
+  handle.style.display = '';
+  overlay.style.cursor = '';
   const vw = d.canvas.viewportWidth;
   const vh = d.canvas.viewportHeight;
   let vx;
@@ -329,7 +338,11 @@ function updateSceneControls() {
   const d = doc();
   const L = d.light;
   setVal($('light-type'), L.type);
+  const off = L.type === 'off';
+  // Azimuth only applies to a distant light; all light params hide when off.
   $('row-azimuth').style.display = L.type === 'distant' ? '' : 'none';
+  $('row-elevation').style.display = off ? 'none' : '';
+  $('row-intensity').style.display = off ? 'none' : '';
   setVal($('light-azimuth'), Math.round(L.azimuth));
   $('out-azimuth').textContent = Math.round(L.azimuth) + '°';
   setVal($('light-elevation'), Math.round(L.elevation));
