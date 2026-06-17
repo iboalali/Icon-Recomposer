@@ -156,6 +156,7 @@ body {
 }
 .layer-item:hover { border-color: var(--line-2); }
 .layer-item.selected { border-color: var(--accent); background: var(--accent-weak); }
+.layer-item.primary { box-shadow: inset 3px 0 0 var(--accent); }
 .layer-item .vis {
   background: none; border: none; cursor: pointer; color: var(--muted);
   font-size: 13px; padding: 0; width: 18px; text-align: center;

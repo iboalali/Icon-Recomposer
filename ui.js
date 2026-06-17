@@ -29,7 +29,7 @@ const $ = (id) => document.getElementById(id);
 // ---- state ----
 const appState = {
   document: sampleDocument(),
-  ui: { selectedLayerId: null, projectName: 'icon' },
+  ui: { selectedLayerIds: [], primaryLayerId: null, selectAnchorId: null, projectName: 'icon' },
 };
 const undoStack = [];
 const redoStack = [];
@@ -41,7 +41,13 @@ let bgColorField = null;
 let strokeColorField = null;
 
 const doc = () => appState.document;
-const selectedLayer = () => doc().layers.find((l) => l.id === appState.ui.selectedLayerId) || null;
+// Selection is a set of layer ids; the "primary" (last-clicked) layer's values
+// populate the inspector, while edits apply to every selected layer.
+const selectedLayers = () => doc().layers.filter((l) => appState.ui.selectedLayerIds.includes(l.id));
+const primaryLayer = () =>
+  doc().layers.find((l) => l.id === appState.ui.primaryLayerId) ||
+  doc().layers.find((l) => appState.ui.selectedLayerIds.includes(l.id)) ||
+  null;
 
 // ---- undo/redo ----
 function snapshot() {
@@ -89,7 +95,11 @@ function redo() {
   scheduleRender();
 }
 function reconcileSelection() {
-  if (!doc().layers.some((l) => l.id === appState.ui.selectedLayerId)) appState.ui.selectedLayerId = null;
+  const ids = doc().layers.map((l) => l.id);
+  appState.ui.selectedLayerIds = appState.ui.selectedLayerIds.filter((id) => ids.includes(id));
+  if (!ids.includes(appState.ui.primaryLayerId)) {
+    appState.ui.primaryLayerId = appState.ui.selectedLayerIds[appState.ui.selectedLayerIds.length - 1] || null;
+  }
 }
 function updateHistoryButtons() {
   $('btn-undo').disabled = undoStack.length === 0;
@@ -138,9 +148,9 @@ function updateSelectionOverlay() {
   const d = doc();
   ov.setAttribute('viewBox', `0 0 ${d.canvas.viewportWidth} ${d.canvas.viewportHeight}`);
 
-  const layer = selectedLayer();
-  const outline = layer && layer.visible ? bakedOutline(layer) : '';
-  const key = outline ? layer.id + '|' + outline : '';
+  const sel = selectedLayers().filter((l) => l.visible && l.pathData);
+  const outline = sel.map((l) => bakedOutline(l)).join('');
+  const key = outline ? sel.map((l) => l.id).join(',') + '|' + outline : '';
   if (key === lastSelKey) return;
   lastSelKey = key;
 
@@ -165,7 +175,12 @@ function renderLayerList() {
   for (let vi = 0; vi < layers.length; vi++) {
     const layer = layers[layers.length - 1 - vi];
     const li = document.createElement('li');
-    li.className = 'layer-item' + (layer.id === appState.ui.selectedLayerId ? ' selected' : '') + (layer.visible ? '' : ' hidden-layer');
+    const isSel = appState.ui.selectedLayerIds.includes(layer.id);
+    li.className =
+      'layer-item' +
+      (isSel ? ' selected' : '') +
+      (layer.id === appState.ui.primaryLayerId ? ' primary' : '') +
+      (layer.visible ? '' : ' hidden-layer');
     li.dataset.id = layer.id;
 
     const vis = document.createElement('button');
@@ -186,7 +201,7 @@ function renderLayerList() {
     const del = miniBtn('✕', 'Delete', (e) => { e.stopPropagation(); deleteLayer(layer.id); });
 
     li.append(vis, name, up, down, del);
-    li.addEventListener('click', () => selectLayer(layer.id));
+    li.addEventListener('click', (e) => handleLayerClick(layer.id, e));
     ul.appendChild(li);
   }
   if (!layers.length) {
@@ -206,7 +221,39 @@ function miniBtn(label, title, onClick) {
 }
 
 function selectLayer(id) {
-  appState.ui.selectedLayerId = id;
+  appState.ui.selectedLayerIds = id ? [id] : [];
+  appState.ui.primaryLayerId = id || null;
+  appState.ui.selectAnchorId = id || null;
+  scheduleRender();
+}
+// Layer-list click with modifiers: plain = single; Ctrl/Cmd = toggle; Shift =
+// range from the anchor (in visual / front-first order).
+function handleLayerClick(id, e) {
+  const ui = appState.ui;
+  if (e.shiftKey && ui.selectAnchorId) {
+    const order = doc().layers.map((l) => l.id).reverse();
+    const a = order.indexOf(ui.selectAnchorId);
+    const b = order.indexOf(id);
+    if (a >= 0 && b >= 0) {
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      ui.selectedLayerIds = order.slice(lo, hi + 1);
+      ui.primaryLayerId = id;
+    }
+  } else if (e.ctrlKey || e.metaKey) {
+    const i = ui.selectedLayerIds.indexOf(id);
+    if (i >= 0) {
+      ui.selectedLayerIds.splice(i, 1);
+      ui.primaryLayerId = ui.selectedLayerIds[ui.selectedLayerIds.length - 1] || null;
+    } else {
+      ui.selectedLayerIds.push(id);
+      ui.primaryLayerId = id;
+    }
+    ui.selectAnchorId = id;
+  } else {
+    ui.selectedLayerIds = [id];
+    ui.primaryLayerId = id;
+    ui.selectAnchorId = id;
+  }
   scheduleRender();
 }
 function moveLayer(id, visualDir) {
@@ -226,7 +273,15 @@ function deleteLayer(id) {
     const layers = doc().layers;
     const i = layers.findIndex((l) => l.id === id);
     if (i >= 0) layers.splice(i, 1);
-    if (appState.ui.selectedLayerId === id) appState.ui.selectedLayerId = null;
+    reconcileSelection();
+  });
+}
+function deleteSelected() {
+  if (!appState.ui.selectedLayerIds.length) return;
+  commit(() => {
+    const sel = new Set(appState.ui.selectedLayerIds);
+    doc().layers = doc().layers.filter((l) => !sel.has(l.id));
+    reconcileSelection();
   });
 }
 
@@ -326,11 +381,12 @@ function setChecked(el, v) {
 }
 
 function updateInspector() {
-  const layer = selectedLayer();
-  const showLayer = !!layer;
+  const layer = primaryLayer();
+  const count = appState.ui.selectedLayerIds.length;
+  const showLayer = count >= 1 && !!layer;
   $('scene-panel').hidden = showLayer;
   $('layer-panel').hidden = !showLayer;
-  if (showLayer) updateLayerControls(layer);
+  if (showLayer) updateLayerControls(layer, count);
   else updateSceneControls();
 }
 
@@ -358,8 +414,12 @@ function updateSceneControls() {
   setVal($('png-size'), d.canvas.pngSize);
 }
 
-function updateLayerControls(layer) {
+function updateLayerControls(layer, count) {
   const m = layer.material;
+  // Multi-select: title shows the count; the per-layer Name field is hidden
+  // (controls show the primary layer's values; edits apply to all selected).
+  $('layer-panel-title').textContent = count > 1 ? `${count} layers` : 'Layer';
+  $('row-layer-name').style.display = count > 1 ? 'none' : '';
   setVal($('layer-name'), layer.name);
   matColorField.setValue(m.baseColor.slice(0, 7));
   setVal($('mat-alpha'), m.fillAlpha);
@@ -411,7 +471,7 @@ function wireControls() {
 
   // Color fields (custom in-page popover — never clips off-screen).
   matColorField = createColorField($('mat-color'), {
-    onInput: (hex) => { beginGesture(); withLayer((l) => (l.material.baseColor = hex)); scheduleRender(); },
+    onInput: (hex) => { beginGesture(); withSelected((l) => (l.material.baseColor = hex)); scheduleRender(); },
     onCommit: commitGesture,
   });
   bgColorField = createColorField($('bg-color'), {
@@ -419,7 +479,7 @@ function wireControls() {
     onCommit: commitGesture,
   });
   strokeColorField = createColorField($('stroke-color'), {
-    onInput: (hex) => { beginGesture(); withLayer((l) => { if (l.material.stroke) l.material.stroke.color = hex; }); scheduleRender(); },
+    onInput: (hex) => { beginGesture(); withSelected((l) => { if (l.material.stroke) l.material.stroke.color = hex; }); scheduleRender(); },
     onCommit: commitGesture,
   });
 
@@ -429,37 +489,42 @@ function wireControls() {
   nameInput.addEventListener('input', () => { appState.ui.projectName = nameInput.value; });
 
   // Layer · material
-  liveInput($('layer-name'), (el) => { withLayer((l) => (l.name = el.value)); });
-  liveInput($('mat-alpha'), (el) => { withLayer((l) => (l.material.fillAlpha = +el.value)); });
+  liveInput($('layer-name'), (el) => { withPrimary((l) => (l.name = el.value)); });
+  liveInput($('mat-alpha'), (el) => { withSelected((l) => (l.material.fillAlpha = +el.value)); });
   for (const r of document.querySelectorAll('input[name="fillmode"]')) {
-    r.addEventListener('change', () => commit(() => withLayer((l) => (l.material.fillMode = r.value))));
+    r.addEventListener('change', () => commit(() => withSelected((l) => (l.material.fillMode = r.value))));
   }
-  liveInput($('mat-emboss'), (el) => { withLayer((l) => (l.material.embossIntensity = +el.value)); });
-  liveInput($('mat-sheen-on'), (el) => { withLayer((l) => (l.material.sheen.enabled = el.checked)); });
-  liveInput($('mat-sheen'), (el) => { withLayer((l) => (l.material.sheen.strength = +el.value)); });
-  liveInput($('mat-fillrule'), (el) => { withLayer((l) => (l.fillRule = el.value)); });
+  liveInput($('mat-emboss'), (el) => { withSelected((l) => (l.material.embossIntensity = +el.value)); });
+  liveInput($('mat-sheen-on'), (el) => { withSelected((l) => (l.material.sheen.enabled = el.checked)); });
+  liveInput($('mat-sheen'), (el) => { withSelected((l) => (l.material.sheen.strength = +el.value)); });
+  liveInput($('mat-fillrule'), (el) => { withSelected((l) => (l.fillRule = el.value)); });
 
   // Layer · shadow
-  liveInput($('shadow-on'), (el) => { withLayer((l) => (l.castsShadow.enabled = el.checked)); });
-  liveInput($('shadow-opacity'), (el) => { withLayer((l) => (l.castsShadow.opacity = +el.value)); });
-  liveInput($('shadow-spread'), (el) => { withLayer((l) => (l.castsShadow.spread = +el.value)); });
-  liveInput($('shadow-clip'), (el) => { withLayer((l) => (l.castsShadow.clipToLayers = el.checked)); });
+  liveInput($('shadow-on'), (el) => { withSelected((l) => (l.castsShadow.enabled = el.checked)); });
+  liveInput($('shadow-opacity'), (el) => { withSelected((l) => (l.castsShadow.opacity = +el.value)); });
+  liveInput($('shadow-spread'), (el) => { withSelected((l) => (l.castsShadow.spread = +el.value)); });
+  liveInput($('shadow-clip'), (el) => { withSelected((l) => (l.castsShadow.clipToLayers = el.checked)); });
 
   // Layer · stroke
   liveInput($('stroke-on'), (el) => {
-    withLayer((l) => {
+    withSelected((l) => {
       if (el.checked) l.material.stroke = l.material.stroke || { color: '#000000ff', width: 1, cap: 'butt', join: 'miter' };
       else l.material.stroke = null;
     });
   });
-  liveInput($('stroke-width'), (el) => { withLayer((l) => { if (l.material.stroke) l.material.stroke.width = +el.value; }); });
-  liveInput($('mat-fillnone'), (el) => { withLayer((l) => (l.material.fillNone = el.value === 'true')); });
+  liveInput($('stroke-width'), (el) => { withSelected((l) => { if (l.material.stroke) l.material.stroke.width = +el.value; }); });
+  liveInput($('mat-fillnone'), (el) => { withSelected((l) => (l.material.fillNone = el.value === 'true')); });
 
-  $('layer-deselect').addEventListener('click', () => { appState.ui.selectedLayerId = null; scheduleRender(); });
+  $('layer-deselect').addEventListener('click', () => selectLayer(null));
 }
 
-function withLayer(fn) {
-  const l = selectedLayer();
+// Apply an edit to every selected layer (shared material/shadow/stroke).
+function withSelected(fn) {
+  for (const l of selectedLayers()) fn(l);
+}
+// Apply an edit to the primary layer only (the per-layer Name).
+function withPrimary(fn) {
+  const l = primaryLayer();
   if (l) fn(l);
 }
 
@@ -544,7 +609,11 @@ function importLayers(res, filename, viaOpen) {
     }
     d.layers.push(...res.layers);
   });
-  if (res.layers.length) appState.ui.selectedLayerId = res.layers[0].id;
+  if (res.layers.length) {
+    appState.ui.selectedLayerIds = [res.layers[0].id];
+    appState.ui.primaryLayerId = res.layers[0].id;
+    appState.ui.selectAnchorId = res.layers[0].id;
+  }
   const warn = res.warnings && res.warnings.length;
   const prefix = viaOpen ? `That's a vector file — ` : '';
   toast(`${prefix}Imported ${res.layers.length} layer${res.layers.length === 1 ? '' : 's'} from ${filename}.` + (warn ? ` (${res.warnings.length} warning${res.warnings.length === 1 ? '' : 's'})` : ''), warn ? 'warn' : '');
@@ -593,7 +662,9 @@ async function doExport(action) {
 
 function loadDocument(rawDoc, name) {
   appState.document = normalizeDocument(rawDoc);
-  appState.ui.selectedLayerId = null;
+  appState.ui.selectedLayerIds = [];
+  appState.ui.primaryLayerId = null;
+  appState.ui.selectAnchorId = null;
   appState.ui.projectName = name || 'icon';
   $('doc-name').value = appState.ui.projectName;
   undoStack.length = 0;
@@ -649,11 +720,11 @@ document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
-  else if ((e.key === 'Delete' || e.key === 'Backspace') && appState.ui.selectedLayerId) {
+  else if ((e.key === 'Delete' || e.key === 'Backspace') && appState.ui.selectedLayerIds.length) {
     const tag = (document.activeElement && document.activeElement.tagName) || '';
     if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
       e.preventDefault();
-      deleteLayer(appState.ui.selectedLayerId);
+      deleteSelected();
     }
   }
 });

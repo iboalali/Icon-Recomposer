@@ -49,7 +49,7 @@
         <h2>Layers</h2>
       </div>
       <ul id="layer-list" class="layer-list"></ul>
-      <p class="hint">Top of the list paints last (front-most).</p>
+      <p class="hint">Top of the list paints last (front-most). Ctrl/⌘- or Shift-click to select multiple.</p>
     </aside>
 
     <!-- CENTER: canvas -->
@@ -124,11 +124,11 @@
       <!-- Layer panel (a layer is selected) -->
       <div id="layer-panel" hidden>
         <div class="panel-head">
-          <h2>Layer</h2>
+          <h2 id="layer-panel-title">Layer</h2>
           <button id="layer-deselect" class="link" title="Back to scene">Scene ▸</button>
         </div>
 
-        <label class="row">
+        <label class="row" id="row-layer-name">
           <span>Name</span>
           <input id="layer-name" type="text" />
         </label>
