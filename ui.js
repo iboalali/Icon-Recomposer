@@ -32,7 +32,7 @@ const $ = (id) => document.getElementById(id);
 // ---- state ----
 const appState = {
   document: sampleDocument(),
-  ui: { selectedLayerIds: [], primaryLayerId: null, selectAnchorId: null, projectName: 'icon' },
+  ui: { selectedLayerIds: [], primaryLayerId: null, selectAnchorId: null, projectName: 'icon', scaleLinked: true },
 };
 const undoStack = [];
 const redoStack = [];
@@ -598,6 +598,20 @@ function updateLayerControls(layer, count) {
   const tl = layer.pathData ? layerTopLeft(layer) : { x: 0, y: 0 };
   setVal($('layer-x'), round2(tl.x));
   setVal($('layer-y'), round2(tl.y));
+  // Scale = primary layer's current scale as a percentage; link state swaps rows.
+  const t = layer.transform || {};
+  const sx = t.scaleX == null ? 1 : t.scaleX;
+  const sy = t.scaleY == null ? 1 : t.scaleY;
+  const linked = appState.ui.scaleLinked;
+  setVal($('layer-scale'), round2(sx * 100));
+  setVal($('layer-scale-x'), round2(sx * 100));
+  setVal($('layer-scale-y'), round2(sy * 100));
+  $('row-scale').style.display = linked ? '' : 'none';
+  $('row-scale-x').style.display = linked ? 'none' : '';
+  $('row-scale-y').style.display = linked ? 'none' : '';
+  const linkBtn = $('scale-link');
+  linkBtn.setAttribute('aria-pressed', String(linked));
+  linkBtn.textContent = linked ? '🔗 Linked' : '🔓 Independent';
   matColorField.setValue(m.baseColor.slice(0, 7));
   setVal($('mat-alpha'), m.fillAlpha);
   $('out-alpha').textContent = (+m.fillAlpha).toFixed(2);
@@ -718,6 +732,31 @@ function wireControls() {
     withSelected((l) => translateLayer(l, 0, dy));
   });
 
+  // Layer · scale — percentage (100 = original), scaling each selected layer in
+  // place about its own center. Guard against non-finite/<=0 so the affine
+  // matrix in derive() is never poisoned. Linked = one field drives both axes.
+  liveInput($('layer-scale'), (el) => {
+    const v = +el.value;
+    if (!isFinite(v) || v <= 0) return;
+    withSelected((l) => scaleLayer(l, v / 100, v / 100));
+  });
+  liveInput($('layer-scale-x'), (el) => {
+    const v = +el.value;
+    if (!isFinite(v) || v <= 0) return;
+    withSelected((l) => scaleLayer(l, v / 100, null));
+  });
+  liveInput($('layer-scale-y'), (el) => {
+    const v = +el.value;
+    if (!isFinite(v) || v <= 0) return;
+    withSelected((l) => scaleLayer(l, null, v / 100));
+  });
+  // Link toggle is a session preference (not part of the document): just swaps
+  // which scale rows are visible.
+  $('scale-link').addEventListener('click', () => {
+    appState.ui.scaleLinked = !appState.ui.scaleLinked;
+    updateInspector();
+  });
+
   // Layer · material
   liveInput($('layer-name'), (el) => { withPrimary((l) => (l.name = el.value)); });
   liveInput($('mat-alpha'), (el) => { withSelected((l) => (l.material.fillAlpha = +el.value)); });
@@ -770,12 +809,28 @@ function ensureTransform(layer) {
   if (!layer.transform) layer.transform = { translateX: 0, translateY: 0 };
   if (!isFinite(+layer.transform.translateX)) layer.transform.translateX = 0;
   if (!isFinite(+layer.transform.translateY)) layer.transform.translateY = 0;
+  if (!isFinite(+layer.transform.scaleX)) layer.transform.scaleX = 1;
+  if (!isFinite(+layer.transform.scaleY)) layer.transform.scaleY = 1;
   return layer.transform;
 }
 function translateLayer(layer, dx, dy) {
   const t = ensureTransform(layer);
   t.translateX += dx;
   t.translateY += dy;
+}
+// Scale a layer in place around its raw (un-transformed) bbox center, so the
+// shape grows/shrinks about its own middle and the existing translate offset
+// still moves it. Pivot lives in raw-path space — the space layerMatrix()
+// applies in — and raw pathData never changes, so this stays stable. Pass null
+// for an axis to leave it untouched (independent X/Y when unlinked).
+function scaleLayer(layer, sx, sy) {
+  if (!layer || !layer.pathData) return;
+  const t = ensureTransform(layer);
+  const b = P.bbox(P.parse(layer.pathData));
+  t.pivotX = b.cx;
+  t.pivotY = b.cy;
+  if (sx != null) t.scaleX = sx;
+  if (sy != null) t.scaleY = sy;
 }
 // Current top-left of the layer's baked bbox, in viewport (canvas) coordinates.
 function layerTopLeft(layer) {

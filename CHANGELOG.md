@@ -7,6 +7,17 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Added
+
+- **Per-layer scale** — a Scale control in the Layer panel resizes the selected
+  layer(s) in place by a percentage (`100` = original), scaling about each
+  layer's own center. Content may extend past the canvas edge; nothing is
+  clipped and the original path data is preserved (the scale is stored as a
+  non-destructive layer transform in the project file). A link toggle unlocks
+  independent X / Y scaling.
+
 ## [1.3.0] — 2026-06-17
 
 ### Added
