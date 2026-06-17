@@ -7,6 +7,14 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [1.2.1] — 2026-06-17
+
+### Fixed
+
+- With **Link W/H** on, editing one canvas dimension now updates the other
+  field too. The canvas already resized correctly; only the linked field's
+  displayed value lagged when focus moved into it.
+
 ## [1.2.0] — 2026-06-17
 
 ### Added

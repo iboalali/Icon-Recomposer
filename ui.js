@@ -645,12 +645,21 @@ function wireControls() {
   // contents" computes the ratio against the size you started from. With "Link
   // W/H" on (default), editing one dimension updates the other to keep the
   // current aspect ratio, so the whole canvas resizes together.
+  // After resizing, reflect the final dimensions in BOTH fields immediately.
+  // The async render's setVal() skips a focused field, so when the user edits
+  // one field and tabs/clicks into the other, the linked field would otherwise
+  // stay stale — write them directly here.
+  function syncCanvasFields() {
+    $('canvas-w').value = doc().canvas.viewportWidth;
+    $('canvas-h').value = doc().canvas.viewportHeight;
+  }
   $('canvas-w').addEventListener('change', () => {
     const c = doc().canvas;
     let w = +$('canvas-w').value;
     let h = +$('canvas-h').value;
     if ($('canvas-lock').checked && c.viewportWidth > 0) h = Math.round((w * c.viewportHeight) / c.viewportWidth);
     resizeCanvas(w, h);
+    syncCanvasFields();
   });
   $('canvas-h').addEventListener('change', () => {
     const c = doc().canvas;
@@ -658,6 +667,7 @@ function wireControls() {
     let h = +$('canvas-h').value;
     if ($('canvas-lock').checked && c.viewportHeight > 0) w = Math.round((h * c.viewportWidth) / c.viewportHeight);
     resizeCanvas(w, h);
+    syncCanvasFields();
   });
   for (const b of document.querySelectorAll('.preset-size')) {
     b.addEventListener('click', () => resizeCanvas(+b.dataset.size, +b.dataset.size));
