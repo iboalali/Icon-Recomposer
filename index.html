@@ -80,6 +80,14 @@
               <option value="off">Off (no light)</option>
             </select>
           </label>
+          <label class="row" id="row-light-x">
+            <span>Position X</span>
+            <input id="light-x" type="number" step="0.5" class="num" />
+          </label>
+          <label class="row" id="row-light-y">
+            <span>Position Y</span>
+            <input id="light-y" type="number" step="0.5" class="num" />
+          </label>
           <label class="row" id="row-azimuth">
             <span>Azimuth</span>
             <input id="light-azimuth" type="range" min="0" max="360" step="1" />
@@ -153,6 +161,20 @@
           <span>Name</span>
           <input id="layer-name" type="text" />
         </label>
+
+        <fieldset class="group">
+          <legend>Position</legend>
+          <label class="row">
+            <span>X</span>
+            <input id="layer-x" type="number" step="0.5" class="num"
+                   title="Left edge of the layer in canvas units (may go off-canvas)" />
+          </label>
+          <label class="row">
+            <span>Y</span>
+            <input id="layer-y" type="number" step="0.5" class="num"
+                   title="Top edge of the layer in canvas units (may go off-canvas)" />
+          </label>
+        </fieldset>
 
         <fieldset class="group">
           <legend>Material</legend>

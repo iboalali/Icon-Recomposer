@@ -125,6 +125,8 @@ body {
   background: var(--panel);
   border-right: 1px solid var(--line);
   overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0; /* grid items default to min-width:auto and would overflow the track */
   padding: 0.75rem;
 }
 #inspector { border-right: none; border-left: 1px solid var(--line); }
@@ -183,6 +185,7 @@ body {
   place-items: center;
   padding: 2rem;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 .canvas-wrap {
@@ -219,6 +222,12 @@ body {
   overflow: visible;
 }
 .selection-overlay[hidden] { display: none; }
+/* Invisible filled hit target inside the marquee — drag it to move the layer(s).
+   A child can opt back into hit-testing with pointer-events even though the
+   overlay root is `none`. Decorative strokes stay inert. */
+.selection-overlay .sel-hit { pointer-events: fill; cursor: move; touch-action: none; }
+.selection-overlay .sel-halo,
+.selection-overlay .sel-line { pointer-events: none; }
 .selection-overlay .sel-halo {
   stroke: rgba(0, 0, 0, 0.55);
   stroke-width: 3.5px;
@@ -235,7 +244,9 @@ body {
 }
 @keyframes marching-ants { to { stroke-dashoffset: -18; } }
 
-.light-overlay { position: absolute; inset: 0; cursor: crosshair; }
+/* Overlay is inert — only the handle is interactive, so clicking the canvas
+   elsewhere never moves the light. */
+.light-overlay { position: absolute; inset: 0; pointer-events: none; }
 .light-handle {
   position: absolute;
   width: 22px; height: 22px;
@@ -246,6 +257,7 @@ body {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5), 0 0 18px 6px rgba(255, 220, 140, 0.6);
   cursor: grab;
   touch-action: none;
+  pointer-events: auto;
 }
 .light-handle:active { cursor: grabbing; }
 
@@ -255,6 +267,7 @@ body {
   border-radius: var(--radius);
   padding: 0.5rem 0.6rem 0.7rem;
   margin: 0 0 0.75rem;
+  min-width: 0; /* <fieldset> defaults to min-width:min-content — would overflow */
 }
 .group legend {
   font-size: 10px;
@@ -276,8 +289,8 @@ body {
 }
 .row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
 .row output { flex: 0 0 38px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
-.row input[type="text"], .row select {
-  flex: 1; min-width: 0;
+.row input[type="text"], .row input[type="number"], .row select {
+  min-width: 0; /* number inputs default to a wide auto min-width — let them shrink */
   background: var(--panel-2);
   border: 1px solid var(--line-2);
   color: var(--text);
@@ -285,6 +298,7 @@ body {
   padding: 0.3rem 0.45rem;
   font: inherit;
 }
+.row input[type="text"], .row select { flex: 1; }
 /* color swatch button (opens the custom popover) */
 .swatch {
   inline-size: 42px; block-size: 26px; padding: 0;
@@ -293,18 +307,19 @@ body {
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
 }
 .swatch:hover { border-color: var(--accent); }
-.row .num { flex: 0 0 64px; }
+.row .num { flex: 0 0 72px; min-width: 0; }
 .times, .unit { color: var(--muted); }
-.presets { display: flex; gap: 4px; flex: 1; }
+.presets { display: flex; gap: 4px; flex: 1; min-width: 0; }
 .chip {
   flex: 1;
+  min-width: 0; /* allow shrinking so the row never overflows the panel */
   background: var(--panel-2);
   border: 1px solid var(--line-2);
   color: var(--text);
   font: inherit;
   font-size: 11px;
   border-radius: 6px;
-  padding: 3px 0;
+  padding: 3px 2px;
   cursor: pointer;
 }
 .chip:hover { border-color: var(--accent); }

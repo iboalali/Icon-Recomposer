@@ -166,7 +166,12 @@ function updateSelectionOverlay() {
   }
   const dEsc = outline.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   ov.removeAttribute('hidden');
-  ov.innerHTML = `<path class="sel-halo" fill="none" d="${dEsc}"/><path class="sel-line" fill="none" d="${dEsc}"/>`;
+  // sel-hit (first) is an invisible, FILLED drag target — `fill="none"` would
+  // not be hittable. The halo/line are decorative and inert (see styles.css).
+  ov.innerHTML =
+    `<path class="sel-hit" fill="#000" fill-opacity="0" d="${dEsc}"/>` +
+    `<path class="sel-halo" fill="none" d="${dEsc}"/>` +
+    `<path class="sel-line" fill="none" d="${dEsc}"/>`;
 }
 
 // ---- layer list (derived view) ----
@@ -370,12 +375,11 @@ function applyLightFromViewport(vx, vy) {
 function onDragStart(e) {
   if (doc().light.type === 'off') return; // nothing to drag when the light is off
   dragging = true;
-  overlay.setPointerCapture(e.pointerId);
+  try { handle.setPointerCapture(e.pointerId); } catch (_) {}
   beginGesture();
-  const v = viewportFromEvent(e);
-  applyLightFromViewport(v.x, v.y);
-  scheduleRender();
+  // Don't jump on press — the handle already sits at the light; only a drag moves it.
   e.preventDefault();
+  e.stopPropagation();
 }
 function onDragMove(e) {
   if (!dragging) return;
@@ -386,24 +390,134 @@ function onDragMove(e) {
 function onDragEnd(e) {
   if (!dragging) return;
   dragging = false;
-  try { overlay.releasePointerCapture(e.pointerId); } catch (_) {}
+  try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
   commitGesture();
 }
-overlay.addEventListener('pointerdown', onDragStart);
-overlay.addEventListener('pointermove', onDragMove);
-overlay.addEventListener('pointerup', onDragEnd);
-overlay.addEventListener('pointercancel', onDragEnd);
+// Only the handle is draggable — clicking elsewhere on the canvas does nothing.
+handle.addEventListener('pointerdown', onDragStart);
+handle.addEventListener('pointermove', onDragMove);
+handle.addEventListener('pointerup', onDragEnd);
+handle.addEventListener('pointercancel', onDragEnd);
+
+// ---- moving layers on the canvas (click to select, drag to move) ----
+// Listeners live on the STABLE #canvas-wrap; pointer capture there survives the
+// selection overlay's per-frame innerHTML rebuild during a drag. The light
+// handle stopPropagations its own presses, so they never reach here.
+const canvasWrap = $('canvas-wrap');
+let layerDrag = null;
+
+// Geometric hit-test: topmost (front-most) filled layer under a viewport point.
+let _hitCtx = null;
+function hitContext() {
+  if (!_hitCtx) _hitCtx = document.createElement('canvas').getContext('2d');
+  return _hitCtx;
+}
+function layerAt(vx, vy) {
+  const layers = doc().layers;
+  for (let i = layers.length - 1; i >= 0; i--) {
+    const l = layers[i];
+    if (!l.visible || !l.pathData) continue;
+    const d = bakedOutline(l);
+    if (!d) continue;
+    let path;
+    try { path = new Path2D(d); } catch (_) { continue; }
+    const rule = l.fillRule === 'evenOdd' ? 'evenodd' : 'nonzero';
+    if (hitContext().isPointInPath(path, vx, vy, rule)) return l.id;
+  }
+  return null;
+}
+
+function startLayerDrag(e, v) {
+  const sel = selectedLayers();
+  if (!sel.length) return;
+  layerDrag = {
+    startX: v.x,
+    startY: v.y,
+    moved: false,
+    items: sel.map((l) => ({
+      id: l.id,
+      tx: (l.transform && +l.transform.translateX) || 0,
+      ty: (l.transform && +l.transform.translateY) || 0,
+    })),
+  };
+  try { canvasWrap.setPointerCapture(e.pointerId); } catch (_) {}
+  e.preventDefault();
+}
+
+function onCanvasPointerDown(e) {
+  if (e.button != null && e.button !== 0) return; // primary button / touch only
+  const v = viewportFromEvent(e);
+  const modifier = e.ctrlKey || e.metaKey || e.shiftKey;
+
+  // Plain press on a selected shape → drag the whole selection.
+  if (!modifier && e.target.classList && e.target.classList.contains('sel-hit')) {
+    startLayerDrag(e, v);
+    return;
+  }
+
+  const hitId = layerAt(v.x, v.y);
+
+  // With a modifier, the canvas mirrors the layer list (toggle / range select).
+  if (modifier) {
+    if (hitId) handleLayerClick(hitId, e);
+    return;
+  }
+
+  if (hitId) {
+    if (!appState.ui.selectedLayerIds.includes(hitId)) {
+      appState.ui.selectedLayerIds = [hitId];
+      appState.ui.primaryLayerId = hitId;
+      appState.ui.selectAnchorId = hitId;
+    }
+    startLayerDrag(e, v);
+    scheduleRender();
+  } else if (appState.ui.selectedLayerIds.length) {
+    selectLayer(null); // clicked empty canvas → deselect
+  }
+}
+
+function onCanvasPointerMove(e) {
+  if (!layerDrag) return;
+  const v = viewportFromEvent(e);
+  const dx = v.x - layerDrag.startX;
+  const dy = v.y - layerDrag.startY;
+  if (!layerDrag.moved) {
+    if (dx === 0 && dy === 0) return; // a click that never moved: no undo entry
+    beginGesture();
+    layerDrag.moved = true;
+  }
+  const byId = new Map(doc().layers.map((l) => [l.id, l]));
+  for (const it of layerDrag.items) {
+    const l = byId.get(it.id);
+    if (!l) continue;
+    const t = ensureTransform(l);
+    t.translateX = it.tx + dx; // no clamping — off-canvas is allowed
+    t.translateY = it.ty + dy;
+  }
+  scheduleRender();
+}
+
+function onCanvasPointerUp(e) {
+  if (!layerDrag) return;
+  const moved = layerDrag.moved;
+  layerDrag = null;
+  try { canvasWrap.releasePointerCapture(e.pointerId); } catch (_) {}
+  if (moved) commitGesture();
+}
+
+canvasWrap.addEventListener('pointerdown', onCanvasPointerDown);
+canvasWrap.addEventListener('pointermove', onCanvasPointerMove);
+canvasWrap.addEventListener('pointerup', onCanvasPointerUp);
+canvasWrap.addEventListener('pointercancel', onCanvasPointerUp);
 
 function positionLightHandle() {
   const d = doc();
-  // Hide the handle (and stop the crosshair cursor) when the light is off.
+  // Hide the handle when the light is off (nothing to drag).
   if (d.light.type === 'off') {
     handle.style.display = 'none';
-    overlay.style.cursor = 'default';
     return;
   }
   handle.style.display = '';
-  overlay.style.cursor = '';
   const vw = d.canvas.viewportWidth;
   const vh = d.canvas.viewportHeight;
   let vx;
@@ -447,7 +561,13 @@ function updateSceneControls() {
   const L = d.light;
   setVal($('light-type'), L.type);
   const off = L.type === 'off';
-  // Azimuth only applies to a distant light; all light params hide when off.
+  const point = L.type === 'point';
+  // Position X/Y apply to a point light; azimuth to a distant light; everything
+  // light-related hides when off.
+  $('row-light-x').style.display = point ? '' : 'none';
+  $('row-light-y').style.display = point ? '' : 'none';
+  setVal($('light-x'), round2(L.position.x));
+  setVal($('light-y'), round2(L.position.y));
   $('row-azimuth').style.display = L.type === 'distant' ? '' : 'none';
   $('row-elevation').style.display = off ? 'none' : '';
   $('row-intensity').style.display = off ? 'none' : '';
@@ -473,6 +593,10 @@ function updateLayerControls(layer, count) {
   $('layer-panel-title').textContent = count > 1 ? `${count} layers` : 'Layer';
   $('row-layer-name').style.display = count > 1 ? 'none' : '';
   setVal($('layer-name'), layer.name);
+  // Position = primary layer's current bbox top-left (focus-safe via setVal).
+  const tl = layer.pathData ? layerTopLeft(layer) : { x: 0, y: 0 };
+  setVal($('layer-x'), round2(tl.x));
+  setVal($('layer-y'), round2(tl.y));
   matColorField.setValue(m.baseColor.slice(0, 7));
   setVal($('mat-alpha'), m.fillAlpha);
   $('out-alpha').textContent = (+m.fillAlpha).toFixed(2);
@@ -511,6 +635,8 @@ function liveInput(el, mutate) {
 function wireControls() {
   // Scene · light
   liveInput($('light-type'), (el) => { doc().light.type = el.value; });
+  liveInput($('light-x'), (el) => { const v = +el.value; if (isFinite(v)) doc().light.position.x = clamp(v, 0, doc().canvas.viewportWidth); });
+  liveInput($('light-y'), (el) => { const v = +el.value; if (isFinite(v)) doc().light.position.y = clamp(v, 0, doc().canvas.viewportHeight); });
   liveInput($('light-azimuth'), (el) => { doc().light.azimuth = +el.value; });
   liveInput($('light-elevation'), (el) => { doc().light.elevation = +el.value; });
   liveInput($('light-intensity'), (el) => { doc().light.intensity = +el.value; });
@@ -558,6 +684,26 @@ function wireControls() {
   nameInput.value = appState.ui.projectName;
   nameInput.addEventListener('input', () => { appState.ui.projectName = nameInput.value; });
 
+  // Layer · position — absolute bbox top-left. Editing moves the PRIMARY layer
+  // to the typed coordinate and shifts every selected layer by the same delta
+  // (matching drag). Delta is from the exact minX/minY so there's no drift.
+  liveInput($('layer-x'), (el) => {
+    const p = primaryLayer();
+    if (!p || !p.pathData) return;
+    const v = +el.value;
+    if (!isFinite(v)) return;
+    const dx = v - layerTopLeft(p).x;
+    withSelected((l) => translateLayer(l, dx, 0));
+  });
+  liveInput($('layer-y'), (el) => {
+    const p = primaryLayer();
+    if (!p || !p.pathData) return;
+    const v = +el.value;
+    if (!isFinite(v)) return;
+    const dy = v - layerTopLeft(p).y;
+    withSelected((l) => translateLayer(l, 0, dy));
+  });
+
   // Layer · material
   liveInput($('layer-name'), (el) => { withPrimary((l) => (l.name = el.value)); });
   liveInput($('mat-alpha'), (el) => { withSelected((l) => (l.material.fillAlpha = +el.value)); });
@@ -596,6 +742,28 @@ function withSelected(fn) {
 function withPrimary(fn) {
   const l = primaryLayer();
   if (l) fn(l);
+}
+
+// ---- layer position (move) ----
+// The move offset lives in layer.transform.translateX/Y — already baked by
+// derive() and bakedOutline(), and already persisted. These helpers are the
+// single source of truth shared by the drag gesture and the X/Y fields.
+function ensureTransform(layer) {
+  if (!layer.transform) layer.transform = { translateX: 0, translateY: 0 };
+  if (!isFinite(+layer.transform.translateX)) layer.transform.translateX = 0;
+  if (!isFinite(+layer.transform.translateY)) layer.transform.translateY = 0;
+  return layer.transform;
+}
+function translateLayer(layer, dx, dy) {
+  const t = ensureTransform(layer);
+  t.translateX += dx;
+  t.translateY += dy;
+}
+// Current top-left of the layer's baked bbox, in viewport (canvas) coordinates.
+function layerTopLeft(layer) {
+  if (!layer || !layer.pathData) return { x: 0, y: 0 };
+  const b = P.bbox(P.parse(bakedOutline(layer)));
+  return { x: b.minX, y: b.minY };
 }
 
 // ---- top bar: file + export ----
@@ -783,6 +951,9 @@ function clamp(v, lo, hi) {
 function clampNum(v, lo, hi, fallback) {
   if (!isFinite(v)) return fallback;
   return clamp(v, lo, hi);
+}
+function round2(v) {
+  return Math.round(v * 100) / 100;
 }
 
 // ---- keyboard ----

@@ -129,6 +129,23 @@ export function normalizeDocument(input) {
   return { canvas, light, layers };
 }
 
+// Coerce a (possibly hand-edited) transform into all-numeric fields, or null.
+// translateX/Y is now user-writable (move-layer), so guard against NaN/strings
+// that would poison the affine matrix in derive().
+function normalizeTransform(t) {
+  if (!t || typeof t !== 'object') return null;
+  const n = (v, d) => (isFinite(+v) ? +v : d);
+  return {
+    translateX: n(t.translateX, 0),
+    translateY: n(t.translateY, 0),
+    rotation: n(t.rotation, 0),
+    scaleX: n(t.scaleX, 1),
+    scaleY: n(t.scaleY, 1),
+    pivotX: n(t.pivotX, 0),
+    pivotY: n(t.pivotY, 0),
+  };
+}
+
 function normalizeLayer(input) {
   const l = input && typeof input === 'object' ? input : {};
   const layer = defaultLayer({
@@ -137,7 +154,7 @@ function normalizeLayer(input) {
     visible: l.visible,
     pathData: l.pathData,
     fillRule: l.fillRule === 'evenOdd' ? 'evenOdd' : 'nonZero',
-    transform: l.transform || null,
+    transform: normalizeTransform(l.transform),
   });
   const m = l.material || {};
   layer.material = Object.assign(defaultMaterial(), {

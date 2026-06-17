@@ -9,6 +9,29 @@ into saved project files.
 
 ## [Unreleased]
 
+### Added
+
+- **Move layers** — drag a selected layer (or all selected layers together) on the
+  canvas, or set an exact position with the layer's X/Y fields. Moving a layer
+  off-canvas is allowed; the move round-trips in the project file without losing the
+  original path data.
+- **Click to select on the canvas** — click a layer's shape to select it, Ctrl/⌘-
+  and Shift-click to extend the selection (mirroring the layer list), and click an
+  empty area to deselect.
+- **Numeric light position** — Position X/Y fields for fine point-light placement
+  (alongside the draggable handle).
+
+### Changed
+
+- The light now moves **only by dragging its handle**; clicking elsewhere on the
+  canvas no longer repositions it.
+
+### Fixed
+
+- Canvas size presets could render partially off-screen in the inspector.
+- Number inputs (canvas size, light position, PNG size, stroke width) overflowed
+  the right edge of their panel box — they now size to a fixed width.
+
 ## [1.1.0] — 2026-06-17
 
 ### Added
