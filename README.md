@@ -4,13 +4,22 @@ A browser tool that loads vector artwork (SVG or Android **VectorDrawable** XML)
 
 - **PNG** — transparent or with a chosen background
 - **Android VectorDrawable XML** — icon only
+- **SVG**
 - **Project JSON** — re-editable
 
 Conceptually inspired by macOS Icon Composer, but deliberately constrained so the output always round-trips to a valid VectorDrawable.
 
 **Live:** https://iboalali.com/Icon-Recomposer/
 
-> **Status: pre-implementation.** Only the design spec ([`PLAN.md`](PLAN.md)) and a placeholder landing page exist so far. App code is not written yet.
+## Using it
+
+- **Import** an SVG or Android VectorDrawable to bring artwork in as layers, or **Open** a project JSON to resume editing.
+- Select a layer and set its **material** — base color, opacity, solid/embossed, emboss intensity, sheen, fill rule, and an optional passthrough stroke.
+- **Drag the light** on the canvas; switch it between point, distant, or off. Elevation and intensity tune the shading.
+- Give a layer a **cast shadow** (opacity, spread); by default shadows clip to the layers beneath them rather than spilling onto the background.
+- Name the icon (used for export filenames) and **Export** to PNG, VectorDrawable, SVG, or save the project JSON. Undo/redo with Ctrl/Cmd+Z.
+
+> **Open vs Import:** Open *replaces* the document with a saved project (fully re-editable). Import *appends* vector geometry as new layers. Export bakes the light/emboss into a flattened deliverable — an exported VectorDrawable is **not** a project file, so keep the JSON to keep editing.
 
 ## How it works
 
@@ -41,7 +50,7 @@ No build step. Serve the directory with any static file server and open `index.h
 python3 -m http.server
 ```
 
-Then visit http://localhost:8000. File access is upload/download only (pure web).
+Then visit http://localhost:8000. It must be served over `http://` (not opened as a `file://` path) because it uses ES module imports. File access is upload/download only (pure web).
 
 ## Deployment
 
