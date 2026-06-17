@@ -1,6 +1,6 @@
 # Icon Recomposer
 
-A browser tool that loads vector artwork (SVG or Android **VectorDrawable** XML), applies a subtle 3D **emboss** look driven by a single movable light, and exports the result as:
+A browser tool that loads vector artwork (SVG or Android **VectorDrawable** XML), gives each shape a subtle 3D **emboss** driven by a single movable light (or a true gradient fill), and exports the result as:
 
 - **PNG** — transparent or with a chosen background
 - **Android VectorDrawable XML** — icon only
@@ -13,10 +13,11 @@ Conceptually inspired by macOS Icon Composer, but deliberately constrained so th
 
 ## Using it
 
-- **Import** an SVG or Android VectorDrawable to bring artwork in as layers, or **Open** a project JSON to resume editing.
-- Select a layer and set its **material** — base color, opacity, solid/embossed, emboss intensity, sheen, fill rule, and an optional passthrough stroke.
+- **Import** an SVG or Android VectorDrawable to bring artwork in as layers (colors, strokes, and gradient fills are preserved), or **Open** a project JSON to resume editing.
+- Select a layer and set its **material** — base color and opacity, a **fill mode** (Solid, Embossed, or a true multi-stop **Gradient**), emboss intensity, sheen, fill rule, and an optional stroke. New layers and imported art start flat (Solid); turn on **Embossed** when you want the 3D look.
+- **Move, scale, and flip** layers — drag on the canvas or use the X/Y and Scale % fields, and Flip H/V to mirror. Several selected layers transform together as a group, and strokes and gradients scale along with the shape.
 - **Drag the light** on the canvas; switch it between point, distant, or off. Elevation and intensity tune the shading.
-- Give a layer a **cast shadow** (opacity, spread); by default shadows clip to the layers beneath them rather than spilling onto the background.
+- Give a layer a **cast shadow** (opacity, spread, distance); by default shadows clip to the layers beneath them rather than spilling onto the background.
 - Name the icon (used for export filenames) and **Export** to PNG, VectorDrawable, SVG, or save the project JSON. Undo/redo with Ctrl/Cmd+Z.
 
 > **Open vs Import:** Open *replaces* the document with a saved project (fully re-editable). Import *appends* vector geometry as new layers. Export bakes the light/emboss into a flattened deliverable — an exported VectorDrawable is **not** a project file, so keep the JSON to keep editing.

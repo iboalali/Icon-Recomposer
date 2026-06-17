@@ -35,7 +35,7 @@ authoring model ── derive() ──▶ derived model (flat paths + gradients)
                                    └─▶ PNG via canvas      (export-png.js)
 ```
 
-- **Authoring model** = what the user manipulates: one **shared scene light** (azimuth/elevation, point or distant) + a `layers[]` array where each layer has a `pathData` and a material (base color, solid/embossed, emboss intensity, sheen, cast-shadow). See `PLAN.md` §4.
+- **Authoring model** = what the user manipulates: one **shared scene light** (azimuth/elevation, point or distant) + a `layers[]` array where each layer has a `pathData`, a material (base color + opacity, fill mode **solid / embossed / gradient** — emboss is opt-in, *not* the default — emboss intensity, sheen, optional stroke, cast-shadow), and an optional non-destructive **`transform`** (move / scale / flip). See `PLAN.md` §4.
 - **`derive()`** is the heart: it turns the light + materials into concrete paths and gradients. Light position maps to gradient geometry — **point light → radial gradient center**, **distant light → linear gradient angle**; **cast shadow = an offset clone of the path with a fading gradient**. All gradient geometry lives in shared viewport space so one light stays coherent across layers. Math in `PLAN.md` §12.
 - **One derivation, three renderers** is why WYSIWYG holds — preview, PNG, and VD are three serializers of the *same* derived result.
 
@@ -65,6 +65,10 @@ In the code but not (fully) in `PLAN.md`:
 - **SVG file export** (beyond the plan's PNG/VD/JSON); `standaloneSvg` can bake the background.
 - **Open vs Import both sniff content and route** — Open *replaces* the document with a project; Import *appends* vector geometry; either redirects (with a toast) if the file doesn't match the button. PLAN §7.
 - **Sweep gradients are not emitted** by `derive()` (SVG has no userspace conic gradient → would break preview/VD parity), though `export-vd.js` still supports the form.
+- **Per-layer gradient fills** — `material.fillMode: 'gradient'` with `material.gradient` ({ type linear/radial, stops [{offset,color,alpha}], geometry }) is a true user gradient fill (no emboss on that layer; stack a separate embossed layer to combine). Geometry is stored in the layer's local/pathData space and baked by `layerMatrix` in `derive()` (`buildUserGradient`), so it tracks move/scale/flip. Imported from SVG/VD instead of being flattened (`import.js` `extractSvgGradient`/`extractVdGradient` + `bakeImportedGradient`, objectBoundingBox→absolute). Only linear/radial (sweep excluded). `schemaVersion` is now **2** (additive; v1 still loads).
+- **Non-destructive layer transform (move / scale / flip)** — `layer.transform` ({ translateX/Y, rotation, scaleX/Y, pivotX/Y }) is now **user-driven**, not just import baking: drag on the canvas or set X/Y to **move**, a **Scale %** control resizes, **Flip H/V** mirrors (negative scale). Multi-select transforms the whole selection about its shared center (`transformSelectionAboutCenter` → `scaleSelection`/`flipSelection` in `ui.js`). All of it is baked by `layerMatrix` in `derive()`; `pathData` stays original. Scalar magnitudes that must track the layer — **stroke width** and the **radial-gradient radius** — scale by the matrix's mean axis length (`meanAxisScale(m)`); the stroke **Width** field shows the *base* value, the canvas shows `base × scale`.
+- **Emboss is opt-in** — `defaultMaterial().fillMode` is `'solid'`, so new layers and imported art come in flat with the source color (faithful import; `normalizeLayer`'s fallback is also `'solid'`). The built-in sample doc sets `fillMode: 'embossed'` explicitly to demonstrate the effect.
+- **Per-layer cast-shadow distance** — `castsShadow.distance` multiplies the auto throw length derived from the light (the layer's apparent height above the surface); `1×` keeps the old look.
 
 ### Import / export gotchas (where the real work is)
 

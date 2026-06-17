@@ -7,6 +7,38 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [1.5.0] — 2026-06-17
+
+### Fixed
+
+- **Stroke width now scales with the layer.** Scaling a stroked layer left its
+  outline at the original absolute width, so a shrunk shape looked too heavily
+  outlined (and an enlarged one too thin). The stroke now tracks the layer's
+  scale in the preview, PNG, and VectorDrawable export, matching the geometry.
+
+### Changed
+
+- **Emboss is now opt-in, not the default.** New layers and imported art come in
+  as flat **Solid** fills with the source color, instead of being auto-embossed
+  (which shaded flat fills and shifted them away from the source — e.g.
+  semi-transparent white highlights and solid shapes looked wrong). Apply
+  **Embossed** per layer when you want the 3D look. The built-in sample document
+  stays embossed to demonstrate the effect.
+
+### Added
+
+- **Page metadata for search & link previews** — a `<meta>` description plus Open
+  Graph / Twitter card tags, so sharing the live URL shows a title, summary, and
+  the app-icon image instead of a bare link.
+- **True per-layer gradient fills** — a new **Gradient** fill mode (alongside Solid
+  and Embossed) with a linear/radial type, an editable multi-stop list (color +
+  per-stop alpha + offset), and numeric geometry. Gradients import from SVG
+  (`<linearGradient>`/`<radialGradient>`, incl. objectBoundingBox) and Android
+  VectorDrawable instead of being flattened to one color, round-trip in the project
+  file, track the layer's move/scale/flip, and stay pixel-identical across preview,
+  PNG, and VectorDrawable. A per-layer **"duplicate as gradient overlay"** action
+  stacks an embossed base + a gradient layer so one shape can have both.
+
 ## [1.4.0] — 2026-06-17
 
 ### Added

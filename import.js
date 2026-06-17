@@ -35,23 +35,36 @@ function buildLayers(items, baseMatrix, warnings) {
     let segs = P.parse(it.dRaw);
     let m = it.matrix || P.identity();
     if (baseMatrix) m = P.multiply(baseMatrix, m);
+    const localBox = P.bbox(segs); // pre-bake, for objectBoundingBox gradient mapping
     if (!P.isIdentity(m)) segs = P.transform(segs, m);
     const d = P.serialize(segs);
     if (!d) return;
 
     const material = defaultMaterial();
+    // Imported art is reproduced faithfully (flat) — colors match the source
+    // rather than being shaded by the light. Emboss is an effect the user opts
+    // into per layer.
+    material.fillMode = 'solid';
     if (it.fill == null) {
       // No fill → stroke-only (passthrough) if there's a stroke, else default.
       if (it.stroke) {
         material.fillNone = true;
-        material.fillMode = 'solid';
       } else {
         material.baseColor = '#888888';
       }
     } else {
       material.baseColor = toHex(it.fill);
-      material.fillAlpha = it.fill.a == null ? 1 : it.fill.a;
-      material.fillMode = 'embossed'; // imported art gets the emboss treatment
+      material.fillAlpha = it.fill.a == null ? 1 : it.fill.a; // element opacity
+    }
+    // A captured gradient becomes a true gradient fill (geometry baked to
+    // absolute by the same matrix as the path; the averaged baseColor stays as
+    // the swatch fallback).
+    if (it.gradient) {
+      const g = bakeImportedGradient(it.gradient, m, localBox);
+      if (g) {
+        material.fillMode = 'gradient';
+        material.gradient = g;
+      }
     }
     if (it.stroke) {
       material.stroke = {
@@ -73,6 +86,31 @@ function buildLayers(items, baseMatrix, warnings) {
     );
   });
   return layers;
+}
+
+// Convert a captured import gradient to the model's gradient (absolute coords),
+// baking the shape matrix `m` so it lines up with the baked pathData. SVG
+// objectBoundingBox fractions are first mapped onto the shape's local bbox.
+function bakeImportedGradient(g, m, localBox) {
+  if (!g || !Array.isArray(g.stops) || g.stops.length < 2) return null;
+  const obb = g.units === 'objectBoundingBox';
+  const w = localBox.maxX - localBox.minX;
+  const h = localBox.maxY - localBox.minY;
+  const toAbs = (x, y) => {
+    if (obb) { x = localBox.minX + x * w; y = localBox.minY + y * h; }
+    return P.applyPoint(m, x, y);
+  };
+  const mscale = (Math.hypot(m[0], m[1]) + Math.hypot(m[2], m[3])) / 2;
+  const stops = g.stops.map((s) => ({ offset: s.offset, color: s.color, alpha: s.alpha }));
+  if (g.type === 'radial') {
+    const [cx, cy] = toAbs(g.cx, g.cy);
+    let r = obb ? g.r * ((w + h) / 2) : g.r;
+    r = Math.abs(r * mscale) || 1;
+    return { type: 'radial', cx, cy, r, stops };
+  }
+  const [x1, y1] = toAbs(g.x1, g.y1);
+  const [x2, y2] = toAbs(g.x2, g.y2);
+  return { type: 'linear', x1, y1, x2, y2, stops };
 }
 
 // ---- SVG front-end ----
@@ -163,11 +201,12 @@ function resolveSvgPaint(el, tag, style, root) {
 
   // line/polyline are unfilled by nature unless explicitly filled.
   let fill = parseColor(style.fill);
+  let gradient = null;
   if (style.fill === 'none') fill = null;
   if ((style.fill || '').indexOf('url(') === 0) {
-    // The emboss model uses one base color per layer, so a gradient fill can't
-    // be kept — seed the base color from the gradient's stops (averaged) so the
-    // layer at least resembles its source instead of a flat gray.
+    // Capture the full gradient as a true gradient fill; also seed an averaged
+    // base color as the swatch fallback (used if the gradient can't be parsed).
+    gradient = extractSvgGradient(root, style.fill);
     fill = resolveSvgGradientColor(root, style.fill) || parseColor('#888888');
   }
   if (fill) {
@@ -189,7 +228,45 @@ function resolveSvgPaint(el, tag, style, root) {
       join: style.strokeLinejoin || 'miter',
     };
   }
-  return { fill, fillRule, stroke };
+  return { fill, fillRule, stroke, gradient };
+}
+
+// Capture a full SVG gradient referenced by `url(#id)` into the model gradient
+// shape { type, units, geometry, stops:[{offset,color,alpha}] }. Geometry stays
+// in the gradient's declared units (objectBoundingBox|userSpaceOnUse) — bakeImportedGradient
+// converts to absolute. Follows xlink:href for borrowed stops. Returns null if
+// fewer than two stops resolve.
+function extractSvgGradient(root, fillStr) {
+  const m = /url\(["']?#?.*?#?([^"')#]+)["']?\)/.exec(fillStr || '');
+  if (!root || !m) return null;
+  const grad = root.querySelector(`linearGradient[id="${m[1]}"], radialGradient[id="${m[1]}"]`);
+  if (!grad) return null;
+  let stopsEl = grad.querySelectorAll('stop');
+  let cur = grad, guard = 0;
+  while (cur && (!stopsEl || !stopsEl.length) && guard++ < 5) {
+    const href = cur.getAttribute('href') || cur.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || '';
+    const hm = /^#(.+)$/.exec(href.trim());
+    cur = hm ? root.querySelector(`linearGradient[id="${hm[1]}"], radialGradient[id="${hm[1]}"]`) : null;
+    if (cur) stopsEl = cur.querySelectorAll('stop');
+  }
+  if (!stopsEl || !stopsEl.length) return null;
+  const stops = [];
+  for (const s of stopsEl) {
+    const cs = getComputedStyle(s);
+    const c = parseColor(cs.stopColor || s.getAttribute('stop-color')) || { r: 0, g: 0, b: 0, a: 1 };
+    const opStr = cs.stopOpacity != null && cs.stopOpacity !== '' ? cs.stopOpacity : s.getAttribute('stop-opacity') || '1';
+    const op = parseFloat(opStr);
+    let off = (s.getAttribute('offset') || '0').trim();
+    off = off.endsWith('%') ? parseFloat(off) / 100 : parseFloat(off);
+    stops.push({ offset: isFinite(off) ? clamp01(off) : 0, color: toHex(c), alpha: isFinite(op) ? clamp01(op) : 1 });
+  }
+  if (stops.length < 2) return null;
+  const units = grad.getAttribute('gradientUnits') === 'userSpaceOnUse' ? 'userSpaceOnUse' : 'objectBoundingBox';
+  const ga = (name, dflt) => { const v = parseFloat(grad.getAttribute(name)); return isFinite(v) ? v : dflt; };
+  if (grad.tagName.toLowerCase().replace(/^.*:/, '') === 'radialgradient') {
+    return { type: 'radial', units, cx: ga('cx', 0.5), cy: ga('cy', 0.5), r: ga('r', 0.5), stops };
+  }
+  return { type: 'linear', units, x1: ga('x1', 0), y1: ga('y1', 0), x2: ga('x2', 1), y2: ga('y2', 0), stops };
 }
 
 // Seed a single base color from an SVG gradient referenced by `url(#id)`:
@@ -332,12 +409,14 @@ function resolveVdPath(el, warnings) {
   const fillType = (vdAttr(el, 'fillType') || 'nonZero').toLowerCase() === 'evenodd' ? 'evenOdd' : 'nonZero';
 
   let fill = null;
+  let gradient = null;
   const fillColorStr = vdAttr(el, 'fillColor');
   const grad = findGradient(el, 'android:fillColor');
   if (fillColorStr) {
     fill = resolveVdColor(fillColorStr, warnings);
   } else if (grad) {
-    fill = seedFromGradient(grad); // discard gradient, seed baseColor from a stop
+    fill = seedFromGradient(grad); // averaged base color (swatch fallback)
+    gradient = extractVdGradient(grad); // full gradient (true fill)
   }
   if (fill) {
     const fa = parseFloat(vdAttr(el, 'fillAlpha'));
@@ -360,7 +439,39 @@ function resolveVdPath(el, warnings) {
   }
 
   const name = vdAttr(el, 'name') || 'Path';
-  return { dRaw, fill, fillRule: fillType, stroke, name };
+  return { dRaw, fill, fillRule: fillType, stroke, name, gradient };
+}
+
+// Capture a full VD gradient (<gradient> with <item> stops, or the
+// start/center/end attribute form) into the model gradient shape. VD coords are
+// absolute (userSpaceOnUse); sweep has no SVG equivalent so it's dropped (the
+// averaged base color is used instead). Returns null if fewer than two stops.
+function extractVdGradient(grad) {
+  const stops = [];
+  for (const it of grad.children) {
+    if (it.tagName.toLowerCase().replace(/^.*:/, '') !== 'item') continue;
+    const c = resolveVdColor(vdAttr(it, 'color'), []);
+    const off = parseFloat(vdAttr(it, 'offset'));
+    if (c) stops.push({ offset: isFinite(off) ? clamp01(off) : 0, color: toHex(c), alpha: c.a == null ? 1 : c.a });
+  }
+  if (stops.length < 2) {
+    const sc = resolveVdColor(vdAttr(grad, 'startColor'), []);
+    const cc = resolveVdColor(vdAttr(grad, 'centerColor'), []);
+    const ec = resolveVdColor(vdAttr(grad, 'endColor'), []);
+    const arr = [];
+    if (sc) arr.push({ offset: 0, color: toHex(sc), alpha: sc.a == null ? 1 : sc.a });
+    if (cc) arr.push({ offset: 0.5, color: toHex(cc), alpha: cc.a == null ? 1 : cc.a });
+    if (ec) arr.push({ offset: 1, color: toHex(ec), alpha: ec.a == null ? 1 : ec.a });
+    if (arr.length >= 2) { stops.length = 0; stops.push(...arr); }
+  }
+  if (stops.length < 2) return null;
+  const type = (vdAttr(grad, 'type') || 'linear').toLowerCase();
+  const f = (a, d) => { const v = parseFloat(vdAttr(grad, a)); return isFinite(v) ? v : d; };
+  if (type === 'radial') {
+    return { type: 'radial', units: 'userSpaceOnUse', cx: f('centerX', 0), cy: f('centerY', 0), r: f('gradientRadius', 1), stops };
+  }
+  if (type === 'sweep') return null; // not renderable in SVG → keep flat color
+  return { type: 'linear', units: 'userSpaceOnUse', x1: f('startX', 0), y1: f('startY', 0), x2: f('endX', 0), y2: f('endY', 0), stops };
 }
 
 function findGradient(pathEl, attrName) {

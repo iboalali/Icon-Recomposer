@@ -20,6 +20,7 @@ import {
   sampleDocument,
   defaultCanvas,
   defaultLight,
+  defaultGradient,
   normalizeDocument,
   serializeProject,
   parseProject,
@@ -210,9 +211,10 @@ function renderLayerList() {
     const up = miniBtn('↑', 'Move forward', (e) => { e.stopPropagation(); moveLayer(layer.id, -1); });
     const down = miniBtn('↓', 'Move back', (e) => { e.stopPropagation(); moveLayer(layer.id, +1); });
     const dup = miniBtn('⧉', 'Duplicate', (e) => { e.stopPropagation(); duplicateLayers([layer.id]); });
+    const grad = miniBtn('▦', 'Duplicate as gradient overlay', (e) => { e.stopPropagation(); duplicateAsGradientOverlay(layer.id); });
     const del = miniBtn('✕', 'Delete', (e) => { e.stopPropagation(); deleteLayer(layer.id); });
 
-    li.append(vis, name, up, down, dup, del);
+    li.append(vis, name, up, down, dup, grad, del);
     li.addEventListener('click', (e) => handleLayerClick(layer.id, e));
     ul.appendChild(li);
   }
@@ -318,6 +320,30 @@ function duplicateLayers(ids) {
     appState.ui.selectedLayerIds = newIds;
     appState.ui.primaryLayerId = newIds[newIds.length - 1] || null;
     appState.ui.selectAnchorId = appState.ui.primaryLayerId;
+  });
+}
+// Clone a layer directly above itself as a gradient overlay: same path, fill
+// mode 'gradient' with a base-color→transparent default, shadow off (the base
+// already casts). Lets you keep an embossed base AND a gradient on one shape.
+function duplicateAsGradientOverlay(id) {
+  commit(() => {
+    const layers = doc().layers;
+    const i = layers.findIndex((l) => l.id === id);
+    if (i < 0) return;
+    const src = layers[i];
+    const copy = structuredClone(src);
+    copy.id = newId();
+    copy.name = src.name + ' gradient';
+    const base = (copy.material.baseColor || '#3b82f6').slice(0, 7);
+    const g = defaultGradient(base, copy.pathData ? P.bbox(P.parse(copy.pathData)) : null);
+    g.stops = [{ offset: 0, color: base, alpha: 0.55 }, { offset: 1, color: base, alpha: 0 }];
+    copy.material.fillMode = 'gradient';
+    copy.material.gradient = g;
+    copy.castsShadow = Object.assign({}, copy.castsShadow, { enabled: false });
+    layers.splice(i + 1, 0, copy);
+    appState.ui.selectedLayerIds = [copy.id];
+    appState.ui.primaryLayerId = copy.id;
+    appState.ui.selectAnchorId = copy.id;
   });
 }
 // Resize the project's canvas (viewport = VD viewportWidth/Height = SVG
@@ -630,6 +656,7 @@ function updateLayerControls(layer, count) {
   $('out-emboss').textContent = (+m.embossIntensity).toFixed(2);
   setChecked($('mat-sheen-on'), m.sheen.enabled);
   setVal($('mat-sheen'), m.sheen.strength);
+  updateGradientEditor(layer);
   setVal($('mat-fillrule'), layer.fillRule);
 
   setChecked($('shadow-on'), layer.castsShadow.enabled);
@@ -645,6 +672,87 @@ function updateLayerControls(layer, count) {
   strokeColorField.setValue(stroke ? stroke.color.slice(0, 7) : '#000000');
   setVal($('stroke-width'), stroke ? stroke.width : 1);
   setVal($('mat-fillnone'), String(!!m.fillNone));
+}
+
+// ---- gradient editor (derived: stop rows rebuilt only when the set changes) ----
+let gradStops = []; // [{ field, off, al }] for the current stop rows
+let gradStopsKey = null;
+function updateGradientEditor(layer) {
+  const isGrad = layer.material.fillMode === 'gradient';
+  $('gradient-editor').hidden = !isGrad;
+  const g = layer.material.gradient;
+  if (!isGrad || !g) { gradStopsKey = null; return; }
+
+  setVal($('grad-type'), g.type);
+  const lin = g.type !== 'radial';
+  for (const el of document.querySelectorAll('.grad-lin')) el.style.display = lin ? '' : 'none';
+  for (const el of document.querySelectorAll('.grad-rad')) el.style.display = lin ? 'none' : '';
+  setVal($('grad-x1'), round2(g.x1)); setVal($('grad-y1'), round2(g.y1));
+  setVal($('grad-x2'), round2(g.x2)); setVal($('grad-y2'), round2(g.y2));
+  setVal($('grad-cx'), round2(g.cx)); setVal($('grad-cy'), round2(g.cy)); setVal($('grad-r'), round2(g.r));
+  // CSS preview bar (always shown left→right regardless of type)
+  $('grad-bar').style.background =
+    'linear-gradient(to right,' + g.stops.map((s) => `${stopCss(s)} ${Math.round(s.offset * 100)}%`).join(',') + ')';
+
+  // Rebuild stop rows only when the layer or stop count changes (so editing a
+  // value doesn't destroy a focused input or an open color popover).
+  const key = layer.id + '|' + g.stops.length;
+  if (key !== gradStopsKey) {
+    gradStopsKey = key;
+    const cont = $('grad-stops');
+    cont.innerHTML = '';
+    gradStops = [];
+    g.stops.forEach((stop, i) => {
+      const row = document.createElement('div');
+      row.className = 'row grad-stop';
+      const sw = document.createElement('button');
+      sw.type = 'button';
+      sw.className = 'swatch';
+      const off = mkNum('grad-stop-off', 0, 1, 0.01);
+      const al = mkNum('grad-stop-al', 0, 1, 0.05);
+      const del = miniBtn('✕', 'Remove stop', (e) => {
+        e.stopPropagation();
+        if (g.stops.length <= 2) return toast('A gradient needs at least 2 stops.', 'warn');
+        commit(() => withPrimary((l) => { if (l.material.gradient) l.material.gradient.stops.splice(i, 1); }));
+      });
+      row.append(sw, off, al, del);
+      cont.appendChild(row);
+      const field = createColorField(sw, {
+        onInput: (hex) => { beginGesture(); withPrimary((l) => setStop(l, i, { color: hex })); scheduleRender(); },
+        onCommit: commitGesture,
+      });
+      liveInput(off, (el) => { const v = +el.value; if (isFinite(v)) withPrimary((l) => setStop(l, i, { offset: clamp(v, 0, 1) })); });
+      liveInput(al, (el) => { const v = +el.value; if (isFinite(v)) withPrimary((l) => setStop(l, i, { alpha: clamp(v, 0, 1) })); });
+      gradStops.push({ field, off, al });
+    });
+  }
+  // Update row values (focus-safe).
+  g.stops.forEach((stop, i) => {
+    const r = gradStops[i];
+    if (!r) return;
+    r.field.setValue((stop.color || '#000000').slice(0, 7));
+    setVal(r.off, round2(stop.offset));
+    setVal(r.al, round2(stop.alpha == null ? 1 : stop.alpha));
+  });
+}
+function setStop(layer, i, patch) {
+  const g = layer.material.gradient;
+  if (g && g.stops[i]) Object.assign(g.stops[i], patch);
+}
+function stopCss(s) {
+  const a = s.alpha == null ? 1 : s.alpha;
+  const c = (s.color || '#000000').slice(1);
+  const r = parseInt(c.slice(0, 2), 16) || 0, gg = parseInt(c.slice(2, 4), 16) || 0, b = parseInt(c.slice(4, 6), 16) || 0;
+  return `rgba(${r},${gg},${b},${a})`;
+}
+function mkNum(cls, min, max, step) {
+  const el = document.createElement('input');
+  el.type = 'number';
+  el.className = 'num ' + cls;
+  el.min = min;
+  el.max = max;
+  el.step = step;
+  return el;
 }
 
 // ---- wire controlled inputs (once) ----
@@ -771,12 +879,30 @@ function wireControls() {
   liveInput($('layer-name'), (el) => { withPrimary((l) => (l.name = el.value)); });
   liveInput($('mat-alpha'), (el) => { withSelected((l) => (l.material.fillAlpha = +el.value)); });
   for (const r of document.querySelectorAll('input[name="fillmode"]')) {
-    r.addEventListener('change', () => commit(() => withSelected((l) => (l.material.fillMode = r.value))));
+    r.addEventListener('change', () => commit(() => withSelected((l) => {
+      l.material.fillMode = r.value;
+      // Switching to Gradient with no gradient yet → seed one spanning the shape.
+      if (r.value === 'gradient' && !l.material.gradient) {
+        l.material.gradient = defaultGradient(l.material.baseColor, l.pathData ? P.bbox(P.parse(l.pathData)) : null);
+      }
+    })));
   }
   liveInput($('mat-emboss'), (el) => { withSelected((l) => (l.material.embossIntensity = +el.value)); });
   liveInput($('mat-sheen-on'), (el) => { withSelected((l) => (l.material.sheen.enabled = el.checked)); });
   liveInput($('mat-sheen'), (el) => { withSelected((l) => (l.material.sheen.strength = +el.value)); });
   liveInput($('mat-fillrule'), (el) => { withSelected((l) => (l.fillRule = el.value)); });
+
+  // Gradient editor — edits apply to the primary layer (gradients differ per layer).
+  liveInput($('grad-type'), (el) => { withPrimary((l) => { if (l.material.gradient) l.material.gradient.type = el.value === 'radial' ? 'radial' : 'linear'; }); });
+  $('grad-add').addEventListener('click', () => commit(() => withPrimary((l) => {
+    const g = l.material.gradient;
+    if (!g) return;
+    const last = g.stops[g.stops.length - 1];
+    g.stops.push({ offset: 1, color: last ? last.color : '#ffffff', alpha: last ? (last.alpha == null ? 1 : last.alpha) : 1 });
+  })));
+  for (const [id, key] of [['grad-x1', 'x1'], ['grad-y1', 'y1'], ['grad-x2', 'x2'], ['grad-y2', 'y2'], ['grad-cx', 'cx'], ['grad-cy', 'cy'], ['grad-r', 'r']]) {
+    liveInput($(id), (el) => { const v = +el.value; if (isFinite(v)) withPrimary((l) => { if (l.material.gradient) l.material.gradient[key] = v; }); });
+  }
 
   // Layer · shadow
   liveInput($('shadow-on'), (el) => { withSelected((l) => (l.castsShadow.enabled = el.checked)); });

@@ -5,8 +5,8 @@
 // a layers[] array, each layer a pathData + material. derive() turns this into
 // the flat derived model that all three renderers consume.
 
-export const SCHEMA_VERSION = 1;
-export const APP_VERSION = '1.4.0';
+export const SCHEMA_VERSION = 2;
+export const APP_VERSION = '1.5.0';
 export const FORMAT_ID = 'icon-emboss';
 
 let idCounter = 0;
@@ -36,11 +36,49 @@ export function defaultMaterial(baseColor = '#3b82f6') {
   return {
     baseColor,
     fillAlpha: 1,
-    fillMode: 'embossed', // solid | embossed
+    fillMode: 'solid', // solid | embossed | gradient — emboss is opt-in, not default
     embossIntensity: 1.0,
     sheen: { enabled: false, strength: 0.35 },
     stroke: null, // { color, width, cap, join } — passthrough, un-embossed
     fillNone: false, // stroke-only layer
+    gradient: null, // user gradient fill (fillMode 'gradient'); see normalizeGradient
+  };
+}
+
+// A user gradient fill. Geometry is in the layer's local (pathData) space so
+// derive() bakes it with the same transform as the path. Stops carry color +
+// alpha separately (per-stop transparency). Linear uses x1/y1/x2/y2; radial
+// uses cx/cy/r. Returns null if there aren't at least two usable stops.
+export function defaultGradient(baseColor = '#3b82f6', box = null) {
+  const b = box || { minX: 0, minY: 0, maxX: 100, maxY: 100, cx: 50, cy: 50, w: 100, h: 100 };
+  return {
+    type: 'linear',
+    x1: b.minX, y1: b.cy, x2: b.maxX, y2: b.cy,
+    cx: b.cx, cy: b.cy, r: 0.5 * Math.max(b.w, b.h) || 50,
+    stops: [
+      { offset: 0, color: baseColor.slice(0, 7), alpha: 1 },
+      { offset: 1, color: '#ffffff', alpha: 1 },
+    ],
+  };
+}
+
+function normalizeGradient(g) {
+  if (!g || typeof g !== 'object') return null;
+  const num = (v, d) => (isFinite(+v) ? +v : d);
+  const stopsIn = Array.isArray(g.stops) ? g.stops : [];
+  const stops = stopsIn
+    .map((s) => ({
+      offset: Math.min(1, Math.max(0, num(s && s.offset, 0))),
+      color: (s && typeof s.color === 'string' ? s.color : '#000000').slice(0, 7),
+      alpha: Math.min(1, Math.max(0, num(s && s.alpha, 1))),
+    }))
+    .sort((a, b) => a.offset - b.offset);
+  if (stops.length < 2) return null;
+  return {
+    type: g.type === 'radial' ? 'radial' : 'linear',
+    x1: num(g.x1, 0), y1: num(g.y1, 0), x2: num(g.x2, 100), y2: num(g.y2, 0),
+    cx: num(g.cx, 50), cy: num(g.cy, 50), r: num(g.r, 50),
+    stops,
   };
 }
 
@@ -96,6 +134,7 @@ export function sampleDocument() {
     pathData: roundedRectPath(8, 8, 92, 92, 24),
     material: defaultMaterial('#2563eb'),
   });
+  plate.material.fillMode = 'embossed';
   plate.material.embossIntensity = 1.0;
   plate.material.sheen = { enabled: true, strength: 0.3 };
   plate.castsShadow = { enabled: true, opacity: 0.4, spread: 0.5, distance: 1, clipToLayers: true };
@@ -105,6 +144,7 @@ export function sampleDocument() {
     pathData: 'M44 38 L74 54 L44 70 Z',
     material: defaultMaterial('#eff6ff'),
   });
+  glyph.material.fillMode = 'embossed';
   glyph.material.embossIntensity = 0.8;
   glyph.castsShadow = { enabled: true, opacity: 0.3, spread: 0.35, distance: 1.6, clipToLayers: true };
 
@@ -171,14 +211,16 @@ function normalizeLayer(input) {
     transform: normalizeTransform(l.transform),
   });
   const m = l.material || {};
+  const fillMode = m.fillMode === 'embossed' || m.fillMode === 'gradient' ? m.fillMode : 'solid';
   layer.material = Object.assign(defaultMaterial(), {
     baseColor: m.baseColor || '#3b82f6',
     fillAlpha: m.fillAlpha == null ? 1 : m.fillAlpha,
-    fillMode: m.fillMode === 'solid' ? 'solid' : 'embossed',
+    fillMode,
     embossIntensity: m.embossIntensity == null ? 1 : m.embossIntensity,
     sheen: Object.assign({ enabled: false, strength: 0.35 }, m.sheen || {}),
     stroke: m.stroke || null,
     fillNone: !!m.fillNone,
+    gradient: normalizeGradient(m.gradient),
   });
   layer.castsShadow = Object.assign({ enabled: false, opacity: 0.35, spread: 0.4, distance: 1, clipToLayers: true }, l.castsShadow || {});
   return layer;
@@ -187,7 +229,10 @@ function normalizeLayer(input) {
 // Migrate a parsed project payload from its schemaVersion up to current.
 function migrate(payload) {
   let v = payload.schemaVersion || 1;
-  // (No migrations yet — v1 is current. Future bumps add steps here.)
+  // v1 → v2: added optional material.gradient + fillMode 'gradient'. Purely
+  // additive — normalizeLayer fills `gradient: null` for old docs, so no
+  // structural transform is needed here.
+  if (v < 2) v = 2;
   return payload.document;
 }
 

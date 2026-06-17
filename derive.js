@@ -70,7 +70,8 @@ export function derive(document) {
 
     // Normalize once; bake any user transform (import already baked its own).
     let segs = P.parse(layer.pathData);
-    if (layer.transform) segs = P.transform(segs, layerMatrix(layer.transform));
+    const lm = layer.transform ? layerMatrix(layer.transform) : null;
+    if (lm) segs = P.transform(segs, lm);
     const d = P.serialize(segs);
     const box = P.bbox(segs);
     const shapeCenter = [box.cx, box.cy];
@@ -78,7 +79,10 @@ export function derive(document) {
     const mat = layer.material;
     const base = parseColor(mat.baseColor) || { r: 59, g: 130, b: 246, a: 1 };
     const fillAlpha = mat.fillAlpha == null ? 1 : mat.fillAlpha;
-    const strokeOut = mat.stroke ? resolveStroke(mat.stroke) : null;
+    // Stroke width is baked-in like the geometry: scale it with the layer so a
+    // scaled shape's outline keeps its proportions (the path coords are already
+    // transformed above, so an unscaled width would read too thick/thin).
+    const strokeOut = mat.stroke ? resolveStroke(mat.stroke, lm ? meanAxisScale(lm) : 1) : null;
 
     // Stroke-only layer → passthrough, excluded from emboss/shadow (PLAN §13).
     // Also not a solid surface, so it doesn't catch other layers' shadows.
@@ -119,8 +123,16 @@ export function derive(document) {
       }
     }
 
-    // 2) Lit fill.
-    if (!embossed || c <= 0.001) {
+    // 2) Fill. A user gradient fill replaces the emboss (a VD fill holds one
+    // gradient); stack a separate layer for emboss + gradient on one shape.
+    if (mat.fillMode === 'gradient' && mat.gradient) {
+      paths.push({
+        d,
+        fillRule: layer.fillRule,
+        fill: { type: 'gradient', gradient: buildUserGradient(mat.gradient, lm, fillAlpha) },
+        stroke: strokeOut,
+      });
+    } else if (!embossed || c <= 0.001) {
       paths.push({
         d,
         fillRule: layer.fillRule,
@@ -227,6 +239,34 @@ function sheenRadial(light, box, strength) {
   };
 }
 
+// Build a derived gradient from a user gradient fill. Geometry is in the
+// layer's local (pathData) space, so we bake it with the SAME matrix as the
+// path → the gradient tracks move/scale/flip. Stop alpha folds in the layer's
+// fillAlpha, exactly like the solid/emboss fills.
+function buildUserGradient(g, m, fillAlpha) {
+  const stops = g.stops.map((s) => {
+    const c = parseColor(s.color) || BLACK;
+    return { offset: clamp01(s.offset), color: scaleAlpha(withAlpha(c, s.alpha == null ? 1 : s.alpha), fillAlpha) };
+  });
+  if (g.type === 'radial') {
+    let cx = g.cx, cy = g.cy, r = g.r;
+    if (m) {
+      const p = P.applyPoint(m, g.cx, g.cy);
+      cx = p[0];
+      cy = p[1];
+      r = g.r * meanAxisScale(m); // mean axis scale (non-uniform → circle approx)
+    }
+    return { id: gradId(), kind: 'radial', cx, cy, r: Math.max(0.01, Math.abs(r)), stops };
+  }
+  let x1 = g.x1, y1 = g.y1, x2 = g.x2, y2 = g.y2;
+  if (m) {
+    const a = P.applyPoint(m, g.x1, g.y1);
+    const b = P.applyPoint(m, g.x2, g.y2);
+    x1 = a[0]; y1 = a[1]; x2 = b[0]; y2 = b[1];
+  }
+  return { id: gradId(), kind: 'linear', x1, y1, x2, y2, stops };
+}
+
 function buildShadow(segs, box, shapeCenter, ctx) {
   const { light, f, len, cfg } = ctx;
   if (len <= 0.01) return null;
@@ -271,14 +311,22 @@ function buildShadow(segs, box, shapeCenter, ctx) {
   };
 }
 
-function resolveStroke(stroke) {
+function resolveStroke(stroke, scale = 1) {
   const color = parseColor(stroke.color) || BLACK;
   return {
     color,
-    width: stroke.width == null ? 1 : stroke.width,
+    width: (stroke.width == null ? 1 : stroke.width) * scale,
     cap: stroke.cap || 'butt',
     join: stroke.join || 'miter',
   };
+}
+
+// Mean axis scale of an affine matrix's linear part — for things that carry a
+// single scalar magnitude (stroke width, radial gradient radius) and must track
+// the layer. Exact for a uniform scale; a non-uniform scale is approximated by
+// the average of the two axis lengths.
+function meanAxisScale(m) {
+  return (Math.hypot(m[0], m[1]) + Math.hypot(m[2], m[3])) / 2;
 }
 
 // The baked outline of a single layer (transform applied), in viewport space.
