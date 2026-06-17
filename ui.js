@@ -606,15 +606,19 @@ function updateLayerControls(layer, count) {
   const sx = t.scaleX == null ? 1 : t.scaleX;
   const sy = t.scaleY == null ? 1 : t.scaleY;
   const linked = appState.ui.scaleLinked;
-  setVal($('layer-scale'), round2(sx * 100));
-  setVal($('layer-scale-x'), round2(sx * 100));
-  setVal($('layer-scale-y'), round2(sy * 100));
+  // Scale fields show the magnitude (always positive); the sign is the flip
+  // state, surfaced on the Flip buttons below.
+  setVal($('layer-scale'), round2(Math.abs(sx) * 100));
+  setVal($('layer-scale-x'), round2(Math.abs(sx) * 100));
+  setVal($('layer-scale-y'), round2(Math.abs(sy) * 100));
   $('row-scale').style.display = linked ? '' : 'none';
   $('row-scale-x').style.display = linked ? 'none' : '';
   $('row-scale-y').style.display = linked ? 'none' : '';
   const linkBtn = $('scale-link');
   linkBtn.setAttribute('aria-pressed', String(linked));
   linkBtn.textContent = linked ? '🔗 Linked' : '🔓 Independent';
+  $('flip-h').setAttribute('aria-pressed', String(sx < 0));
+  $('flip-v').setAttribute('aria-pressed', String(sy < 0));
   matColorField.setValue(m.baseColor.slice(0, 7));
   setVal($('mat-alpha'), m.fillAlpha);
   $('out-alpha').textContent = (+m.fillAlpha).toFixed(2);
@@ -759,6 +763,9 @@ function wireControls() {
     appState.ui.scaleLinked = !appState.ui.scaleLinked;
     updateInspector();
   });
+  // Flip the selection (mirror) — one undo entry per click.
+  $('flip-h').addEventListener('click', () => { if (selectedLayers().length) commit(() => flipSelection('x')); });
+  $('flip-v').addEventListener('click', () => { if (selectedLayers().length) commit(() => flipSelection('y')); });
 
   // Layer · material
   liveInput($('layer-name'), (el) => { withPrimary((l) => (l.name = el.value)); });
@@ -832,7 +839,13 @@ function translateLayer(layer, dx, dy) {
 // current scale, since pivot keeps the displayed centre at raw-centre +
 // translate). Computing C from that keeps absolute scaling stable across edits.
 // Pass null for an axis to leave it untouched (independent X/Y when unlinked).
-function scaleSelection(sx, sy) {
+// Apply `fn(transform)` to every selected layer with each layer's pivot set to
+// the selection's shared "home" center, so scale and flip act on the whole
+// selection as one unit (multi-part shapes keep their parts aligned). The home
+// center = union of raw-bbox + translate, independent of the current scale/sign
+// so it's a stable axis across repeated edits. With one layer selected it's the
+// layer's own center, so it transforms in place — identical to before.
+function transformSelectionAboutCenter(fn) {
   const sel = selectedLayers().filter((l) => l.pathData);
   if (!sel.length) return;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -851,9 +864,24 @@ function scaleSelection(sx, sy) {
     const t = ensureTransform(l);
     t.pivotX = cx - (t.translateX || 0);
     t.pivotY = cy - (t.translateY || 0);
-    if (sx != null) t.scaleX = sx;
-    if (sy != null) t.scaleY = sy;
+    fn(t, l);
   }
+}
+// Set the scale magnitude while preserving the flip sign, so changing the
+// percentage never un-flips a layer.
+function scaleSelection(sx, sy) {
+  transformSelectionAboutCenter((t) => {
+    if (sx != null) t.scaleX = Math.abs(sx) * (t.scaleX < 0 ? -1 : 1);
+    if (sy != null) t.scaleY = Math.abs(sy) * (t.scaleY < 0 ? -1 : 1);
+  });
+}
+// Mirror the selection about its shared center: 'x' = horizontal (negate
+// scaleX), 'y' = vertical (negate scaleY). Multi-select flips as a group.
+function flipSelection(axis) {
+  transformSelectionAboutCenter((t) => {
+    if (axis === 'x') t.scaleX = -t.scaleX;
+    else t.scaleY = -t.scaleY;
+  });
 }
 // Current top-left of the layer's baked bbox, in viewport (canvas) coordinates.
 function layerTopLeft(layer) {

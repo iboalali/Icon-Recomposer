@@ -340,6 +340,7 @@ body {
 }
 .chip:hover { border-color: var(--accent); }
 .chip:active { transform: translateY(1px); }
+.chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-weak); }
 .seg { display: flex; gap: 0.75rem; }
 .seg label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 

@@ -145,7 +145,7 @@ function walkSvg(el, parentMatrix, items, warnings, rootForUse) {
     const dRaw = shapeToPath(el, tag, warnings);
     if (dRaw) {
       const style = getComputedStyle(el);
-      const item = resolveSvgPaint(el, tag, style);
+      const item = resolveSvgPaint(el, tag, style, rootForUse);
       item.dRaw = dRaw;
       item.matrix = matrix;
       item.name = el.getAttribute('id') || el.getAttribute('class') || cap(tag);
@@ -158,14 +158,17 @@ function walkSvg(el, parentMatrix, items, warnings, rootForUse) {
   for (const child of el.children) walkSvg(child, matrix, items, warnings, rootForUse);
 }
 
-function resolveSvgPaint(el, tag, style) {
+function resolveSvgPaint(el, tag, style, root) {
   const opacity = clamp01(parseFloat(style.opacity) || 1);
 
   // line/polyline are unfilled by nature unless explicitly filled.
   let fill = parseColor(style.fill);
   if (style.fill === 'none') fill = null;
   if ((style.fill || '').indexOf('url(') === 0) {
-    fill = parseColor('#888888'); // source gradient discarded → seed default
+    // The emboss model uses one base color per layer, so a gradient fill can't
+    // be kept — seed the base color from the gradient's stops (averaged) so the
+    // layer at least resembles its source instead of a flat gray.
+    fill = resolveSvgGradientColor(root, style.fill) || parseColor('#888888');
   }
   if (fill) {
     const fo = clamp01(parseFloat(style.fillOpacity) || 1);
@@ -187,6 +190,32 @@ function resolveSvgPaint(el, tag, style) {
     };
   }
   return { fill, fillRule, stroke };
+}
+
+// Seed a single base color from an SVG gradient referenced by `url(#id)`:
+// average its stop colors. Follows xlink:href/href when a gradient borrows its
+// stops from another. Returns null if the gradient or its stops can't be found.
+function resolveSvgGradientColor(root, fillStr) {
+  const m = /url\(["']?#?.*?#?([^"')#]+)["']?\)/.exec(fillStr || '');
+  if (!root || !m) return null;
+  let grad = root.querySelector(`linearGradient[id="${m[1]}"], radialGradient[id="${m[1]}"]`);
+  let stops = grad ? grad.querySelectorAll('stop') : null;
+  let guard = 0;
+  while (grad && (!stops || !stops.length) && guard++ < 5) {
+    const href = grad.getAttribute('href') || grad.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || '';
+    const hm = /^#(.+)$/.exec(href.trim());
+    grad = hm ? root.querySelector(`linearGradient[id="${hm[1]}"], radialGradient[id="${hm[1]}"]`) : null;
+    stops = grad ? grad.querySelectorAll('stop') : null;
+  }
+  if (!stops || !stops.length) return null;
+  let r = 0, g = 0, b = 0, n = 0;
+  for (const s of stops) {
+    const cs = getComputedStyle(s);
+    const c = parseColor(cs.stopColor || s.getAttribute('stop-color'));
+    if (c) { r += c.r; g += c.g; b += c.b; n += 1; }
+  }
+  if (!n) return null;
+  return { r: Math.round(r / n), g: Math.round(g / n), b: Math.round(b / n), a: 1 };
 }
 
 function shapeToPath(el, tag, warnings) {

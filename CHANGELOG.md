@@ -19,6 +19,10 @@ into saved project files.
   the original path data is preserved (the scale is stored as a non-destructive
   layer transform in the project file). A link toggle unlocks independent X / Y
   scaling.
+- **Flip layers** — Flip H / V buttons mirror the selected layer(s) horizontally
+  or vertically. A single layer flips in place; multiple selected layers flip
+  together about the selection's common center. Non-destructive (stored as the
+  layer transform's scale sign) and independent of the scale percentage.
 - **Anonymous usage & error events** sent to TelemetryDeck via a tiny
   dependency-free signal sender (alongside the existing pageview): `export` (with
   the format), `open`, `import`, `new`, `save`, `undo`, `redo`, and `error`
@@ -29,6 +33,10 @@ into saved project files.
 
 ### Fixed
 
+- **Gradient fills imported as flat gray** — SVG shapes filled with a
+  `url(#gradient)` now seed the layer's base color from the gradient's stops
+  (averaged) instead of falling back to `#888888`, so imported art keeps a
+  representative color. (The emboss model still uses one base color per layer.)
 - **Duplicate layer ids after importing into a loaded project** — generated ids
   could collide with ids already in the document (e.g. importing into the
   default project yielded two `layer-3-7283` layers), so selecting one of them
