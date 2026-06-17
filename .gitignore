@@ -1,0 +1,17 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*~
+
+# Node (in case tooling is added later; project is zero-build by design)
+node_modules/
+npm-debug.log*
+
+# Logs / temp
+*.log
+.cache/
