@@ -7,6 +7,7 @@
 //     (never recreates them — that would kill focus/drag/color-pickers).
 
 import { derive, bakedOutline } from './derive.js';
+import * as P from './path.js';
 import { previewSvg, standaloneSvg } from './svg.js';
 import { exportVD } from './export-vd.js';
 import { renderPng } from './export-png.js';
@@ -14,6 +15,7 @@ import { importVector } from './import.js';
 import { createColorField } from './colorpicker.js';
 import {
   APP_VERSION,
+  newId,
   sampleDocument,
   defaultCanvas,
   defaultLight,
@@ -199,9 +201,10 @@ function renderLayerList() {
 
     const up = miniBtn('↑', 'Move forward', (e) => { e.stopPropagation(); moveLayer(layer.id, -1); });
     const down = miniBtn('↓', 'Move back', (e) => { e.stopPropagation(); moveLayer(layer.id, +1); });
+    const dup = miniBtn('⧉', 'Duplicate', (e) => { e.stopPropagation(); duplicateLayers([layer.id]); });
     const del = miniBtn('✕', 'Delete', (e) => { e.stopPropagation(); deleteLayer(layer.id); });
 
-    li.append(vis, name, up, down, del);
+    li.append(vis, name, up, down, dup, del);
     li.addEventListener('click', (e) => handleLayerClick(layer.id, e));
     ul.appendChild(li);
   }
@@ -283,6 +286,54 @@ function deleteSelected() {
     const sel = new Set(appState.ui.selectedLayerIds);
     doc().layers = doc().layers.filter((l) => !sel.has(l.id));
     reconcileSelection();
+  });
+}
+// Duplicate the given layers, inserting each copy directly above its original
+// (i.e. right after it in paint order), then select the copies.
+function duplicateLayers(ids) {
+  if (!ids || !ids.length) return;
+  const set = new Set(ids);
+  commit(() => {
+    const out = [];
+    const newIds = [];
+    for (const l of doc().layers) {
+      out.push(l);
+      if (set.has(l.id)) {
+        const copy = structuredClone(l);
+        copy.id = newId();
+        copy.name = l.name + ' copy';
+        out.push(copy);
+        newIds.push(copy.id);
+      }
+    }
+    doc().layers = out;
+    appState.ui.selectedLayerIds = newIds;
+    appState.ui.primaryLayerId = newIds[newIds.length - 1] || null;
+    appState.ui.selectAnchorId = appState.ui.primaryLayerId;
+  });
+}
+// Resize the project's canvas (viewport = VD viewportWidth/Height = SVG
+// viewBox, also the dp display size). When "Scale contents" is on, every layer
+// path and the light position scale by the ratio so the icon keeps filling the
+// canvas; otherwise only the coordinate space changes.
+function resizeCanvas(newW, newH) {
+  const d = doc();
+  newW = clampNum(Math.round(newW), 1, 8192, d.canvas.viewportWidth);
+  newH = clampNum(Math.round(newH), 1, 8192, d.canvas.viewportHeight);
+  const oldW = d.canvas.viewportWidth;
+  const oldH = d.canvas.viewportHeight;
+  if (newW === oldW && newH === oldH) return;
+  const scaleContents = $('canvas-scale').checked;
+  commit(() => {
+    if (scaleContents && oldW > 0 && oldH > 0) {
+      const m = P.scale(newW / oldW, newH / oldH);
+      for (const l of d.layers) {
+        if (l.pathData) l.pathData = P.serialize(P.transform(P.parse(l.pathData), m));
+      }
+      d.light.position = { x: (d.light.position.x * newW) / oldW, y: (d.light.position.y * newH) / oldH };
+    }
+    d.canvas.viewportWidth = d.canvas.width = newW;
+    d.canvas.viewportHeight = d.canvas.height = newH;
   });
 }
 
@@ -464,9 +515,27 @@ function wireControls() {
   liveInput($('light-elevation'), (el) => { doc().light.elevation = +el.value; });
   liveInput($('light-intensity'), (el) => { doc().light.intensity = +el.value; });
 
-  // Scene · canvas
-  liveInput($('canvas-w'), (el) => { doc().canvas.viewportWidth = doc().canvas.width = clampNum(+el.value, 1, 8192, 108); });
-  liveInput($('canvas-h'), (el) => { doc().canvas.viewportHeight = doc().canvas.height = clampNum(+el.value, 1, 8192, 108); });
+  // Scene · canvas — resize on commit (change), not per keystroke, so "scale
+  // contents" computes the ratio against the size you started from. With "Link
+  // W/H" on (default), editing one dimension updates the other to keep the
+  // current aspect ratio, so the whole canvas resizes together.
+  $('canvas-w').addEventListener('change', () => {
+    const c = doc().canvas;
+    let w = +$('canvas-w').value;
+    let h = +$('canvas-h').value;
+    if ($('canvas-lock').checked && c.viewportWidth > 0) h = Math.round((w * c.viewportHeight) / c.viewportWidth);
+    resizeCanvas(w, h);
+  });
+  $('canvas-h').addEventListener('change', () => {
+    const c = doc().canvas;
+    let w = +$('canvas-w').value;
+    let h = +$('canvas-h').value;
+    if ($('canvas-lock').checked && c.viewportHeight > 0) w = Math.round((h * c.viewportWidth) / c.viewportHeight);
+    resizeCanvas(w, h);
+  });
+  for (const b of document.querySelectorAll('.preset-size')) {
+    b.addEventListener('click', () => resizeCanvas(+b.dataset.size, +b.dataset.size));
+  }
   liveInput($('bg-transparent'), (el) => { doc().canvas.exportBackground.transparent = el.checked; });
   liveInput($('png-size'), (el) => { doc().canvas.pngSize = clampNum(+el.value, 16, 8192, 1024); });
 
@@ -721,6 +790,7 @@ document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
+  else if (mod && e.key.toLowerCase() === 'd' && appState.ui.selectedLayerIds.length) { e.preventDefault(); duplicateLayers(appState.ui.selectedLayerIds.slice()); }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && appState.ui.selectedLayerIds.length) {
     const tag = (document.activeElement && document.activeElement.tagName) || '';
     if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {

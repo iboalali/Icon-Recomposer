@@ -100,10 +100,31 @@
         <fieldset class="group">
           <legend>Canvas</legend>
           <label class="row">
-            <span>Viewport</span>
+            <span>Width</span>
             <input id="canvas-w" type="number" min="1" step="1" class="num" />
-            <span class="times">×</span>
+          </label>
+          <label class="row">
+            <span>Height</span>
             <input id="canvas-h" type="number" min="1" step="1" class="num" />
+          </label>
+          <label class="row">
+            <span>Link W/H</span>
+            <input id="canvas-lock" type="checkbox" checked
+                   title="Keep width and height in the same ratio when resizing" />
+          </label>
+          <div class="row">
+            <span>Presets</span>
+            <div class="presets">
+              <button type="button" class="chip preset-size" data-size="24">24</button>
+              <button type="button" class="chip preset-size" data-size="108">108</button>
+              <button type="button" class="chip preset-size" data-size="512">512</button>
+              <button type="button" class="chip preset-size" data-size="1024">1024</button>
+            </div>
+          </div>
+          <label class="row">
+            <span>Scale contents</span>
+            <input id="canvas-scale" type="checkbox" checked
+                   title="Scale all layers and the light to fit the new canvas size" />
           </label>
           <label class="row">
             <span>Transparent</span>

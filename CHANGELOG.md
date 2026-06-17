@@ -9,6 +9,18 @@ into saved project files.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-06-17
+
+### Added
+
+- **Duplicate layer** — a per-row button and `Ctrl/⌘+D` copy the selected
+  layer(s), inserting each copy directly above its original and selecting it.
+- **Resize the project canvas** — set the canvas size via separate Width and
+  Height fields or presets (24, 108, 512, 1024). Width and height are linked by
+  default (keep the aspect ratio; unlink to size them independently), and a
+  "Scale contents" option (default on) scales every layer and the light to fit
+  the new size.
+
 ## [1.0.0] — 2026-06-17
 
 Initial release: a zero-build, dependency-free browser tool that loads vector

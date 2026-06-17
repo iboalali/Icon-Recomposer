@@ -295,6 +295,20 @@ body {
 .swatch:hover { border-color: var(--accent); }
 .row .num { flex: 0 0 64px; }
 .times, .unit { color: var(--muted); }
+.presets { display: flex; gap: 4px; flex: 1; }
+.chip {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  border-radius: 6px;
+  padding: 3px 0;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); }
+.chip:active { transform: translateY(1px); }
 .seg { display: flex; gap: 0.75rem; }
 .seg label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 
