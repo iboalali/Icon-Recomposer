@@ -52,6 +52,10 @@ python3 -m http.server
 
 Then visit http://localhost:8000. It must be served over `http://` (not opened as a `file://` path) because it uses ES module imports. File access is upload/download only (pure web).
 
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md). The current version is shown in the app's top bar and defined by `APP_VERSION` in `model.js`.
+
 ## Deployment
 
 Hosted on GitHub Pages (deploy-from-branch: `main` / root). Every push to `main` auto-redeploys.

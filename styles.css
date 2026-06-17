@@ -46,6 +46,12 @@ body {
   letter-spacing: -0.01em;
   font-size: 14px;
 }
+.brand .version {
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--muted);
+}
 .doc-name {
   background: var(--panel-2);
   border: 1px solid var(--line-2);

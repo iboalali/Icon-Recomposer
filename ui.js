@@ -13,6 +13,7 @@ import { renderPng } from './export-png.js';
 import { importVector } from './import.js';
 import { createColorField } from './colorpicker.js';
 import {
+  APP_VERSION,
   sampleDocument,
   defaultCanvas,
   defaultLight,
@@ -731,6 +732,7 @@ document.addEventListener('keydown', (e) => {
 
 // ---- init ----
 function init() {
+  $('app-version').textContent = 'v' + APP_VERSION;
   wireControls();
   wireToolbar();
   updateHistoryButtons();

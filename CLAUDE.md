@@ -8,6 +8,8 @@ The app is built and deployed. `PLAN.md` remains the authoritative design spec �
 
 The repo is on GitHub (`git@github.com:iboalali/Icon-Recomposer.git`) and deployed via **GitHub Pages** (deploy-from-branch: `main` / root). Live at **https://iboalali.com/Icon-Recomposer/** — every push to `main` auto-redeploys.
 
+**Versioning:** the single source of truth is `APP_VERSION` in `model.js` — it's shown in the top bar and written into saved project files (`app` field). When shipping a notable change, bump `APP_VERSION` and add a matching entry to `CHANGELOG.md` (Keep a Changelog format). Bump `schemaVersion` (also `model.js`) only when the document shape changes, and add a migration step.
+
 ## What this is
 
 A browser tool that loads vector artwork (SVG or Android VectorDrawable XML), applies a **subtle 3D emboss** look driven by a single movable light, and exports as: PNG (transparent or chosen background), Android **VectorDrawable XML** (icon only), or a re-editable project JSON. Conceptually inspired by macOS Icon Composer, but constrained so the result round-trips to a valid VectorDrawable.
