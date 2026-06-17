@@ -10,9 +10,14 @@ export const APP_VERSION = '1.3.0';
 export const FORMAT_ID = 'icon-emboss';
 
 let idCounter = 0;
+// Per-load random base so generated ids never collide with ids already present
+// in a loaded/imported project. The counter alone resets to 0 each page load,
+// so without this it would regenerate ids an opened document already holds
+// (e.g. importing into the default project produced two "layer-3-7283" layers).
+const idBase = Math.floor(Math.random() * 0x7fffffff).toString(36);
 export function newId(prefix = 'layer') {
   idCounter += 1;
-  return `${prefix}-${idCounter}-${(idCounter * 2654435761) % 100000}`;
+  return `${prefix}-${idBase}-${idCounter}`;
 }
 
 // ---- defaults ----
@@ -125,6 +130,15 @@ export function normalizeDocument(input) {
   light.position = Object.assign({ x: canvas.viewportWidth / 2, y: canvas.viewportHeight / 2 }, light.position || {});
 
   const layers = Array.isArray(doc.layers) ? doc.layers.map(normalizeLayer) : [];
+
+  // Guarantee unique layer ids — a missing or duplicate id would make selection
+  // (which filters layers by id) match more than one layer. Repairs documents
+  // saved while the id-collision bug was present; keeps the first occurrence.
+  const seenIds = new Set();
+  for (const l of layers) {
+    if (!l.id || seenIds.has(l.id)) l.id = newId();
+    seenIds.add(l.id);
+  }
 
   return { canvas, light, layers };
 }

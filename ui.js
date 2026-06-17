@@ -741,17 +741,17 @@ function wireControls() {
   liveInput($('layer-scale'), (el) => {
     const v = +el.value;
     if (!isFinite(v) || v <= 0) return;
-    withSelected((l) => scaleLayer(l, v / 100, v / 100));
+    scaleSelection(v / 100, v / 100);
   });
   liveInput($('layer-scale-x'), (el) => {
     const v = +el.value;
     if (!isFinite(v) || v <= 0) return;
-    withSelected((l) => scaleLayer(l, v / 100, null));
+    scaleSelection(v / 100, null);
   });
   liveInput($('layer-scale-y'), (el) => {
     const v = +el.value;
     if (!isFinite(v) || v <= 0) return;
-    withSelected((l) => scaleLayer(l, null, v / 100));
+    scaleSelection(null, v / 100);
   });
   // Link toggle is a session preference (not part of the document): just swaps
   // which scale rows are visible.
@@ -821,19 +821,39 @@ function translateLayer(layer, dx, dy) {
   t.translateX += dx;
   t.translateY += dy;
 }
-// Scale a layer in place around its raw (un-transformed) bbox center, so the
-// shape grows/shrinks about its own middle and the existing translate offset
-// still moves it. Pivot lives in raw-path space — the space layerMatrix()
-// applies in — and raw pathData never changes, so this stays stable. Pass null
-// for an axis to leave it untouched (independent X/Y when unlinked).
-function scaleLayer(layer, sx, sy) {
-  if (!layer || !layer.pathData) return;
-  const t = ensureTransform(layer);
-  const b = P.bbox(P.parse(layer.pathData));
-  t.pivotX = b.cx;
-  t.pivotY = b.cy;
-  if (sx != null) t.scaleX = sx;
-  if (sy != null) t.scaleY = sy;
+// Scale every selected layer about the selection's shared "home" center, so a
+// multi-layer shape (e.g. a pen made of several paths) scales as one group and
+// keeps its parts aligned. Each layer's pivot is set to that common viewport
+// point expressed in the layer's own raw-path space (C − translate), and the
+// scale is applied; translate is left untouched. With a single layer selected
+// the center is its own, so it scales in place — identical to before.
+//
+// `home` bbox = raw bbox shifted by the current translate (independent of the
+// current scale, since pivot keeps the displayed centre at raw-centre +
+// translate). Computing C from that keeps absolute scaling stable across edits.
+// Pass null for an axis to leave it untouched (independent X/Y when unlinked).
+function scaleSelection(sx, sy) {
+  const sel = selectedLayers().filter((l) => l.pathData);
+  if (!sel.length) return;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const l of sel) {
+    const b = P.bbox(P.parse(l.pathData));
+    const tx = (l.transform && +l.transform.translateX) || 0;
+    const ty = (l.transform && +l.transform.translateY) || 0;
+    minX = Math.min(minX, b.minX + tx);
+    minY = Math.min(minY, b.minY + ty);
+    maxX = Math.max(maxX, b.maxX + tx);
+    maxY = Math.max(maxY, b.maxY + ty);
+  }
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  for (const l of sel) {
+    const t = ensureTransform(l);
+    t.pivotX = cx - (t.translateX || 0);
+    t.pivotY = cy - (t.translateY || 0);
+    if (sx != null) t.scaleX = sx;
+    if (sy != null) t.scaleY = sy;
+  }
 }
 // Current top-left of the layer's baked bbox, in viewport (canvas) coordinates.
 function layerTopLeft(layer) {

@@ -12,11 +12,13 @@ into saved project files.
 ### Added
 
 - **Per-layer scale** — a Scale control in the Layer panel resizes the selected
-  layer(s) in place by a percentage (`100` = original), scaling about each
-  layer's own center. Content may extend past the canvas edge; nothing is
-  clipped and the original path data is preserved (the scale is stored as a
-  non-destructive layer transform in the project file). A link toggle unlocks
-  independent X / Y scaling.
+  layer(s) in place by a percentage (`100` = original). A single layer scales
+  about its own center; with several layers selected they scale **together as a
+  group** about the selection's common center, so a multi-part shape keeps its
+  parts aligned. Content may extend past the canvas edge; nothing is clipped and
+  the original path data is preserved (the scale is stored as a non-destructive
+  layer transform in the project file). A link toggle unlocks independent X / Y
+  scaling.
 - **Anonymous usage & error events** sent to TelemetryDeck via a tiny
   dependency-free signal sender (alongside the existing pageview): `export` (with
   the format), `open`, `import`, `new`, `save`, `undo`, `redo`, and `error`
@@ -24,6 +26,14 @@ into saved project files.
   cookies; `localhost`/`file://` are flagged as test mode.
 - A **Privacy** link in the top bar pointing to the app's privacy policy
   (with UTM attribution); clicking it sends a `privacyLinkClicked` usage signal.
+
+### Fixed
+
+- **Duplicate layer ids after importing into a loaded project** — generated ids
+  could collide with ids already in the document (e.g. importing into the
+  default project yielded two `layer-3-7283` layers), so selecting one of them
+  selected both. Ids now carry a per-session random base, and loading a project
+  de-duplicates any repeated ids (so previously-saved files self-heal on open).
 
 ## [1.3.0] — 2026-06-17
 
