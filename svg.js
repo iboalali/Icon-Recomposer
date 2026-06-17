@@ -50,6 +50,7 @@ function pathEl(p) {
     attrs.push(`fill="url(#${p.fill.gradient.id})"`);
   }
   if (p.fillRule === 'evenOdd') attrs.push('fill-rule="evenodd"');
+  if (p.clip) attrs.push(`clip-path="url(#${p.clip.id})"`);
   if (p.stroke) {
     attrs.push(`stroke="${toHexA(p.stroke.color)}"`);
     attrs.push(`stroke-width="${n(p.stroke.width)}"`);
@@ -64,10 +65,15 @@ function pathEl(p) {
 function build(derived, dims, opts = {}) {
   const vw = derived.viewportWidth;
   const vh = derived.viewportHeight;
-  const defs = derived.paths
+  const gradDefs = derived.paths
     .filter((p) => p.fill && p.fill.type === 'gradient')
     .map((p) => gradientDef(p.fill.gradient))
     .join('');
+  const clipDefs = derived.paths
+    .filter((p) => p.clip)
+    .map((p) => `<clipPath id="${p.clip.id}" clipPathUnits="userSpaceOnUse"><path d="${esc(p.clip.pathData)}"/></clipPath>`)
+    .join('');
+  const defs = gradDefs + clipDefs;
   const body = derived.paths.map(pathEl).join('');
 
   const sizeAttrs = dims ? ` width="${n(dims.width)}" height="${n(dims.height)}"` : '';

@@ -25,6 +25,11 @@ function gradId() {
   gradSeq += 1;
   return `g${gradSeq}`;
 }
+let clipSeq = 0;
+function clipId() {
+  clipSeq += 1;
+  return `c${clipSeq}`;
+}
 
 function norm2(x, y) {
   const len = Math.hypot(x, y) || 1;
@@ -37,6 +42,7 @@ function norm2(x, y) {
 //   gradient: { kind:'linear'|'radial', stops:[{offset,color}], ...coords }
 export function derive(document) {
   gradSeq = 0;
+  clipSeq = 0;
   const vw = document.canvas.viewportWidth;
   const vh = document.canvas.viewportHeight;
   const light = document.light;
@@ -54,6 +60,9 @@ export function derive(document) {
   const lightOff = light.type === 'off'; // no lighting: flat fills, no sheen/shadow
 
   const paths = [];
+  // Running union of the baked outlines of filled layers below the current one,
+  // used to clip cast shadows so they land on surfaces, not empty background.
+  let unionBelow = '';
 
   for (const layer of document.layers) {
     if (!layer.visible) continue;
@@ -72,6 +81,7 @@ export function derive(document) {
     const strokeOut = mat.stroke ? resolveStroke(mat.stroke) : null;
 
     // Stroke-only layer → passthrough, excluded from emboss/shadow (PLAN §13).
+    // Also not a solid surface, so it doesn't catch other layers' shadows.
     if (mat.fillNone) {
       paths.push({ d, fillRule: layer.fillRule, fill: null, stroke: strokeOut });
       continue;
@@ -92,7 +102,18 @@ export function derive(document) {
         len: clamp(SHADOW_LEN_K * cotT, 0, SHADOW_MAX_LEN) * R,
         cfg: layer.castsShadow,
       });
-      if (sh) paths.push(sh);
+      if (sh) {
+        // Default: clip the shadow to the union of layers below, so it only
+        // shows where it lands on a surface. With nothing below, it has no
+        // surface to fall on → omit it entirely.
+        const clipOn = layer.castsShadow.clipToLayers !== false;
+        if (!clipOn) {
+          paths.push(sh);
+        } else if (unionBelow) {
+          sh.clip = { id: clipId(), pathData: unionBelow };
+          paths.push(sh);
+        }
+      }
     }
 
     // 2) Lit fill.
@@ -119,6 +140,9 @@ export function derive(document) {
           : sheenLinear(C, f, box, mat.sheen.strength);
       paths.push({ d, fillRule: layer.fillRule, fill: { type: 'gradient', gradient }, stroke: null });
     }
+
+    // This (filled) layer becomes a surface for shadows cast by layers above.
+    unionBelow += d;
   }
 
   return {

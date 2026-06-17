@@ -47,7 +47,7 @@ export function defaultLayer(opts = {}) {
     pathData: opts.pathData || '',
     fillRule: opts.fillRule || 'nonZero', // nonZero | evenOdd
     material: opts.material || defaultMaterial(),
-    castsShadow: opts.castsShadow || { enabled: false, opacity: 0.35, spread: 0.4 },
+    castsShadow: opts.castsShadow || { enabled: false, opacity: 0.35, spread: 0.4, clipToLayers: true },
     transform: opts.transform || null, // reserved (import bakes transforms)
   };
 }
@@ -93,7 +93,7 @@ export function sampleDocument() {
   });
   plate.material.embossIntensity = 1.0;
   plate.material.sheen = { enabled: true, strength: 0.3 };
-  plate.castsShadow = { enabled: true, opacity: 0.4, spread: 0.5 };
+  plate.castsShadow = { enabled: true, opacity: 0.4, spread: 0.5, clipToLayers: true };
 
   const glyph = defaultLayer({
     name: 'Glyph',
@@ -101,7 +101,7 @@ export function sampleDocument() {
     material: defaultMaterial('#eff6ff'),
   });
   glyph.material.embossIntensity = 0.8;
-  glyph.castsShadow = { enabled: true, opacity: 0.3, spread: 0.35 };
+  glyph.castsShadow = { enabled: true, opacity: 0.3, spread: 0.35, clipToLayers: true };
 
   return {
     canvas: defaultCanvas(),
@@ -149,7 +149,7 @@ function normalizeLayer(input) {
     stroke: m.stroke || null,
     fillNone: !!m.fillNone,
   });
-  layer.castsShadow = Object.assign({ enabled: false, opacity: 0.35, spread: 0.4 }, l.castsShadow || {});
+  layer.castsShadow = Object.assign({ enabled: false, opacity: 0.35, spread: 0.4, clipToLayers: true }, l.castsShadow || {});
   return layer;
 }
 

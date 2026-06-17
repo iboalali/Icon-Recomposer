@@ -377,6 +377,7 @@ function updateLayerControls(layer) {
   setChecked($('shadow-on'), layer.castsShadow.enabled);
   setVal($('shadow-opacity'), layer.castsShadow.opacity);
   setVal($('shadow-spread'), layer.castsShadow.spread);
+  setChecked($('shadow-clip'), layer.castsShadow.clipToLayers !== false);
 
   const stroke = m.stroke;
   setChecked($('stroke-on'), !!stroke);
@@ -442,6 +443,7 @@ function wireControls() {
   liveInput($('shadow-on'), (el) => { withLayer((l) => (l.castsShadow.enabled = el.checked)); });
   liveInput($('shadow-opacity'), (el) => { withLayer((l) => (l.castsShadow.opacity = +el.value)); });
   liveInput($('shadow-spread'), (el) => { withLayer((l) => (l.castsShadow.spread = +el.value)); });
+  liveInput($('shadow-clip'), (el) => { withLayer((l) => (l.castsShadow.clipToLayers = el.checked)); });
 
   // Layer · stroke
   liveInput($('stroke-on'), (el) => {

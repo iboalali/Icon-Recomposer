@@ -62,16 +62,21 @@ function pathBlock(p) {
   const hasGradient = p.fill && p.fill.type === 'gradient';
   if (!hasGradient) {
     lines.push(`  <path ${attrs.join('\n        ')}/>`);
-    return lines.join('\n');
+  } else {
+    // Gradient fill → <aapt:attr> child block.
+    lines.push(`  <path ${attrs.join('\n        ')}>`);
+    lines.push(`    <aapt:attr name="android:fillColor">`);
+    lines.push(gradientBlock(p.fill.gradient, '    '));
+    lines.push(`    </aapt:attr>`);
+    lines.push(`  </path>`);
   }
+  const pathStr = lines.join('\n');
 
-  // Gradient fill → <aapt:attr> child block.
-  lines.push(`  <path ${attrs.join('\n        ')}>`);
-  lines.push(`    <aapt:attr name="android:fillColor">`);
-  lines.push(gradientBlock(p.fill.gradient, '    '));
-  lines.push(`    </aapt:attr>`);
-  lines.push(`  </path>`);
-  return lines.join('\n');
+  // Clip (cast shadow restricted to the layers below) → a <group> with a
+  // <clip-path>; it clips only the path it wraps. Edges are aliased in VD.
+  if (!p.clip) return pathStr;
+  const inner = pathStr.split('\n').map((l) => '  ' + l).join('\n');
+  return `  <group>\n    <clip-path android:pathData="${esc(p.clip.pathData)}"/>\n${inner}\n  </group>`;
 }
 
 // derived + canvas → VectorDrawable XML string.
