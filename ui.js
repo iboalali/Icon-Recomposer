@@ -13,6 +13,7 @@ import { exportVD } from './export-vd.js';
 import { renderPng } from './export-png.js';
 import { importVector } from './import.js';
 import { createColorField } from './colorpicker.js';
+import { parseColor, mix, toHex, WHITE, BLACK } from './color.js';
 import { signal as tdSignal, reportError as tdError } from './telemetry.js';
 import {
   APP_VERSION,
@@ -44,6 +45,8 @@ let gestureSnapshot = null;
 let matColorField = null;
 let bgColorField = null;
 let strokeColorField = null;
+let gradFromField = null; // simple gradient: first stop's color
+let gradToField = null; //   simple gradient: last stop's color
 
 const doc = () => appState.document;
 // Selection is a set of layer ids; the "primary" (last-clicked) layer's values
@@ -674,6 +677,117 @@ function updateLayerControls(layer, count) {
   setVal($('mat-fillnone'), String(!!m.fillNone));
 }
 
+// ---- gradient simple controls (presets / From→To / direction pad) ----
+// Everything here just mutates layer.material.gradient — the single source of
+// truth the Advanced editor and the derive() pipeline also read, so the two
+// stay in sync automatically (a preset that adds a 3rd stop shows up in both).
+
+// The layer's bbox in its own raw-path space — the space gradient geometry is
+// stored in (derive() bakes the layer transform on top). Falls back to a unit
+// box so presets still produce something on an empty/degenerate path.
+function layerBox(layer) {
+  if (layer && layer.pathData) {
+    try { return P.bbox(P.parse(layer.pathData)); } catch (_) { /* fall through */ }
+  }
+  return { minX: 0, minY: 0, maxX: 100, maxY: 100, cx: 50, cy: 50, w: 100, h: 100 };
+}
+// 8 compass directions → unit vector pointing the way the gradient progresses
+// (From → To). e.g. 's' = top→bottom, 'se' = top-left→bottom-right.
+const DIR_VEC = { n: [0, -1], ne: [1, -1], e: [1, 0], se: [1, 1], s: [0, 1], sw: [-1, 1], w: [-1, 0], nw: [-1, -1] };
+function applyLinearDir(g, dir, box) {
+  const v = DIR_VEC[dir];
+  if (!v) return;
+  const hw = box.w / 2 || 50;
+  const hh = box.h / 2 || 50;
+  g.type = 'linear';
+  g.x1 = box.cx - v[0] * hw; g.y1 = box.cy - v[1] * hh;
+  g.x2 = box.cx + v[0] * hw; g.y2 = box.cy + v[1] * hh;
+}
+function applyRadial(g, box) {
+  g.type = 'radial';
+  g.cx = box.cx; g.cy = box.cy;
+  g.r = 0.5 * Math.hypot(box.w, box.h) || 50; // half-diagonal covers the shape
+}
+// Which direction button to highlight: snap a linear gradient's vector to the
+// nearest of the 8 compass points (best-effort for hand-tuned coordinates).
+function currentDir(g) {
+  const dx = g.x2 - g.x1;
+  const dy = g.y2 - g.y1;
+  if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) return null;
+  const ang = Math.atan2(dy, dx);
+  let best = null;
+  let bestD = Infinity;
+  for (const k in DIR_VEC) {
+    const [vx, vy] = DIR_VEC[k];
+    let d = Math.abs(((ang - Math.atan2(vy, vx) + Math.PI) % (2 * Math.PI)) - Math.PI);
+    if (d < bestD) { bestD = d; best = k; }
+  }
+  return best;
+}
+// Shade a hex toward white / black in OKLab (perceptual, matches the emboss ramp).
+function lighten(hex, k) { return toHex(mix(parseColor(hex) || parseColor('#3b82f6'), WHITE, k)); }
+function darken(hex, k) { return toHex(mix(parseColor(hex) || parseColor('#3b82f6'), BLACK, k)); }
+// A fresh gradient object seeded with sensible geometry for the layer's box.
+function seedGradient(box) {
+  return {
+    type: 'linear',
+    x1: box.minX, y1: box.cy, x2: box.maxX, y2: box.cy,
+    cx: box.cx, cy: box.cy, r: 0.5 * Math.max(box.w, box.h) || 50,
+    stops: [],
+  };
+}
+// One-click "looks" — each builds a complete gradient from the layer's base
+// colour and box. Returned object replaces material.gradient wholesale.
+const GRAD_PRESETS = {
+  toplight(base, box) {
+    const g = seedGradient(box);
+    applyLinearDir(g, 's', box); // light from the top
+    g.stops = [{ offset: 0, color: lighten(base, 0.42), alpha: 1 }, { offset: 1, color: base, alpha: 1 }];
+    return g;
+  },
+  glow(base, box) {
+    const g = seedGradient(box);
+    applyRadial(g, box);
+    g.stops = [{ offset: 0, color: lighten(base, 0.55), alpha: 1 }, { offset: 1, color: base, alpha: 1 }];
+    return g;
+  },
+  sheen(base, box) {
+    const g = seedGradient(box);
+    applyLinearDir(g, 'se', box);
+    g.stops = [
+      { offset: 0, color: lighten(base, 0.6), alpha: 1 },
+      { offset: 0.5, color: base, alpha: 1 },
+      { offset: 1, color: darken(base, 0.18), alpha: 1 },
+    ];
+    return g;
+  },
+  diagonal(base, box) {
+    const g = seedGradient(box);
+    applyLinearDir(g, 'se', box);
+    g.stops = [{ offset: 0, color: base, alpha: 1 }, { offset: 1, color: lighten(base, 0.32), alpha: 1 }];
+    return g;
+  },
+  fade(base, box) {
+    const g = seedGradient(box);
+    applyLinearDir(g, 's', box);
+    g.stops = [{ offset: 0, color: base, alpha: 0.9 }, { offset: 1, color: base, alpha: 0 }];
+    return g;
+  },
+};
+// Reflect the current gradient into the simple controls (focus/popover-safe).
+function updateGradientSimple(g) {
+  const stops = g.stops;
+  const first = stops[0] || { color: '#000000', alpha: 1 };
+  const last = stops[stops.length - 1] || first;
+  if (gradFromField) gradFromField.setValue((first.color || '#000000').slice(0, 7));
+  if (gradToField) gradToField.setValue((last.color || '#000000').slice(0, 7));
+  setChecked($('grad-fade'), (last.alpha == null ? 1 : last.alpha) < 1);
+  const active = g.type === 'radial' ? 'radial' : currentDir(g);
+  for (const btn of $('dir-pad').querySelectorAll('button')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.dir === active));
+  }
+}
+
 // ---- gradient editor (derived: stop rows rebuilt only when the set changes) ----
 let gradStops = []; // [{ field, off, al }] for the current stop rows
 let gradStopsKey = null;
@@ -683,6 +797,7 @@ function updateGradientEditor(layer) {
   const g = layer.material.gradient;
   if (!isGrad || !g) { gradStopsKey = null; return; }
 
+  updateGradientSimple(g);
   setVal($('grad-type'), g.type);
   const lin = g.type !== 'radial';
   for (const el of document.querySelectorAll('.grad-lin')) el.style.display = lin ? '' : 'none';
@@ -892,7 +1007,40 @@ function wireControls() {
   liveInput($('mat-sheen'), (el) => { withSelected((l) => (l.material.sheen.strength = +el.value)); });
   liveInput($('mat-fillrule'), (el) => { withSelected((l) => (l.fillRule = el.value)); });
 
-  // Gradient editor — edits apply to the primary layer (gradients differ per layer).
+  // Gradient editor. The SIMPLE controls are bulk edits across every selected
+  // gradient layer (withSelectedGradients); the ADVANCED controls (exact stops
+  // and coordinates, which differ per layer) edit the primary layer only.
+  // --- simple controls ---
+  // Quick-look presets: rebuild each selected gradient from ITS base + box.
+  for (const btn of document.querySelectorAll('.grad-presets [data-preset]')) {
+    btn.addEventListener('click', () => {
+      const build = GRAD_PRESETS[btn.dataset.preset];
+      if (!build) return;
+      commit(() => withSelectedGradients((l) => {
+        const base = (l.material.baseColor || '#3b82f6').slice(0, 7);
+        l.material.gradient = build(base, layerBox(l));
+      }));
+    });
+  }
+  // From / To colour swatches map to the first / last stop.
+  gradFromField = createColorField($('grad-from'), {
+    onInput: (hex) => { beginGesture(); withSelectedGradients((l, g) => { if (g.stops[0]) g.stops[0].color = hex; }); scheduleRender(); },
+    onCommit: commitGesture,
+  });
+  gradToField = createColorField($('grad-to'), {
+    onInput: (hex) => { beginGesture(); withSelectedGradients((l, g) => { if (g.stops.length) g.stops[g.stops.length - 1].color = hex; }); scheduleRender(); },
+    onCommit: commitGesture,
+  });
+  // Fade: toggle the end stop's alpha between fully opaque and fully transparent.
+  liveInput($('grad-fade'), (el) => { withSelectedGradients((l, g) => { if (g.stops.length) g.stops[g.stops.length - 1].alpha = el.checked ? 0 : 1; }); });
+  // Direction pad: 8 arrows set a linear direction; the centre dot makes it radial.
+  for (const btn of $('dir-pad').querySelectorAll('button')) {
+    btn.addEventListener('click', () => commit(() => withSelectedGradients((l, g) => {
+      if (btn.dataset.dir === 'radial') applyRadial(g, layerBox(l));
+      else applyLinearDir(g, btn.dataset.dir, layerBox(l));
+    })));
+  }
+  // --- advanced controls ---
   liveInput($('grad-type'), (el) => { withPrimary((l) => { if (l.material.gradient) l.material.gradient.type = el.value === 'radial' ? 'radial' : 'linear'; }); });
   $('grad-add').addEventListener('click', () => commit(() => withPrimary((l) => {
     const g = l.material.gradient;
@@ -935,6 +1083,15 @@ function withSelected(fn) {
 function withPrimary(fn) {
   const l = primaryLayer();
   if (l) fn(l);
+}
+// Apply a gradient edit to EVERY selected layer that uses a gradient fill (the
+// simple gradient controls are bulk edits, like base colour / opacity / emboss
+// — so selecting all layers and clicking a preset changes them all). fn gets
+// (layer, gradient). Skips selected layers that aren't gradient layers.
+function withSelectedGradients(fn) {
+  for (const l of selectedLayers()) {
+    if (l.material.fillMode === 'gradient' && l.material.gradient) fn(l, l.material.gradient);
+  }
 }
 
 // ---- layer position (move) ----

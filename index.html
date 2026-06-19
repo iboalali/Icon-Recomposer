@@ -244,7 +244,7 @@
             <input id="mat-alpha" type="range" min="0" max="1" step="0.01" />
             <output id="out-alpha"></output>
           </label>
-          <div class="row">
+          <div class="row stack" id="row-fill">
             <span>Fill</span>
             <div class="seg">
               <label><input type="radio" name="fillmode" value="solid" /> Solid</label>
@@ -263,24 +263,66 @@
             <input id="mat-sheen" type="range" min="0" max="1" step="0.01" />
           </label>
           <div id="gradient-editor" hidden>
-            <label class="row">
-              <span>Gradient</span>
-              <select id="grad-type">
-                <option value="linear">Linear</option>
-                <option value="radial">Radial</option>
-              </select>
-            </label>
+            <!-- Simple path: a preview, one-click "looks", From→To colors, and a
+                 direction pad (centre dot = radial). The full multi-stop editor
+                 and exact coordinates live under "Advanced" below. -->
             <div class="row"><span>Preview</span><div id="grad-bar" class="grad-bar"></div></div>
-            <div id="grad-stops"></div>
-            <div class="row"><span></span><button id="grad-add" type="button" class="chip">+ Add stop</button></div>
-            <label class="row grad-lin"><span>Start X/Y</span>
-              <input id="grad-x1" class="num" type="number" step="1" /><input id="grad-y1" class="num" type="number" step="1" /></label>
-            <label class="row grad-lin"><span>End X/Y</span>
-              <input id="grad-x2" class="num" type="number" step="1" /><input id="grad-y2" class="num" type="number" step="1" /></label>
-            <label class="row grad-rad"><span>Center X/Y</span>
-              <input id="grad-cx" class="num" type="number" step="1" /><input id="grad-cy" class="num" type="number" step="1" /></label>
-            <label class="row grad-rad"><span>Radius</span>
-              <input id="grad-r" class="num" type="number" step="1" /></label>
+            <div class="row stack">
+              <span>Quick looks</span>
+              <div class="grad-presets">
+                <button type="button" class="chip" data-preset="toplight">Top light</button>
+                <button type="button" class="chip" data-preset="glow">Glow</button>
+                <button type="button" class="chip" data-preset="sheen">Sheen</button>
+                <button type="button" class="chip" data-preset="diagonal">Diagonal</button>
+                <button type="button" class="chip" data-preset="fade">Fade out</button>
+              </div>
+            </div>
+            <div class="row">
+              <span>Colors</span>
+              <span class="grad-fromto">
+                <button id="grad-from" type="button" class="swatch" title="Start color"></button>
+                <span class="grad-arrow" aria-hidden="true">→</span>
+                <button id="grad-to" type="button" class="swatch" title="End color"></button>
+              </span>
+              <label class="grad-fade" title="Fade the end colour out to transparent">
+                <input id="grad-fade" type="checkbox" /> Fade
+              </label>
+            </div>
+            <div class="row stack">
+              <span>Direction</span>
+              <div class="dir-pad" id="dir-pad">
+                <button type="button" data-dir="nw" title="Diagonal ↘ (from top-left)">↖</button>
+                <button type="button" data-dir="n" title="Top → bottom">↑</button>
+                <button type="button" data-dir="ne" title="Diagonal ↙ (from top-right)">↗</button>
+                <button type="button" data-dir="w" title="Left → right">←</button>
+                <button type="button" data-dir="radial" title="Radial — spread from the centre">◉</button>
+                <button type="button" data-dir="e" title="Right → left">→</button>
+                <button type="button" data-dir="sw" title="Diagonal ↗ (from bottom-left)">↙</button>
+                <button type="button" data-dir="s" title="Bottom → top">↓</button>
+                <button type="button" data-dir="se" title="Diagonal ↖ (from bottom-right)">↘</button>
+              </div>
+            </div>
+
+            <details class="grad-advanced">
+              <summary>Advanced</summary>
+              <label class="row">
+                <span>Type</span>
+                <select id="grad-type">
+                  <option value="linear">Linear</option>
+                  <option value="radial">Radial</option>
+                </select>
+              </label>
+              <div id="grad-stops"></div>
+              <div class="row"><span></span><button id="grad-add" type="button" class="chip">+ Add stop</button></div>
+              <label class="row grad-lin"><span>Start X/Y</span>
+                <input id="grad-x1" class="num" type="number" step="1" /><input id="grad-y1" class="num" type="number" step="1" /></label>
+              <label class="row grad-lin"><span>End X/Y</span>
+                <input id="grad-x2" class="num" type="number" step="1" /><input id="grad-y2" class="num" type="number" step="1" /></label>
+              <label class="row grad-rad"><span>Center X/Y</span>
+                <input id="grad-cx" class="num" type="number" step="1" /><input id="grad-cy" class="num" type="number" step="1" /></label>
+              <label class="row grad-rad"><span>Radius</span>
+                <input id="grad-r" class="num" type="number" step="1" /></label>
+            </details>
           </div>
           <label class="row">
             <span>Fill rule</span>

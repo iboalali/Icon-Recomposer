@@ -7,6 +7,33 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Added
+
+- **A simple way to make gradients.** Picking the **Gradient** fill now leads
+  with a beginner-friendly path: one-click **Quick looks** (Top light, Glow,
+  Sheen, Diagonal, Fade out) that build a complete gradient from the layer's
+  base colour, a **From → To** colour pair (with a **Fade** toggle that fades
+  the end colour to transparent), and a **direction pad** — eight arrows set a
+  linear direction and the centre dot makes it radial. The full multi-stop
+  editor (offsets, per-stop alpha, exact Start/End or Centre/Radius
+  coordinates) is still there for pros, now tucked under an **Advanced**
+  disclosure. Simple and advanced controls edit the same gradient, so they stay
+  in sync. The simple controls (presets, colours, fade, direction) apply to
+  every selected gradient layer at once, so a multi-part icon can be restyled in
+  one click; the advanced per-stop / per-coordinate controls edit the primary
+  layer only.
+
+### Fixed
+
+- **The "Gradient" fill option is now visible.** In the Layer ▸ Material panel,
+  the three fill options (Solid / Embossed / Gradient) were laid out on one line
+  beside the "Fill" label and didn't fit the inspector's width, so the rightmost
+  "Gradient" option was pushed off the right edge and clipped out of view. The
+  segmented control now sits on its own line under the label, full width, so all
+  three options are always visible.
+
 ## [1.5.1] — 2026-06-17
 
 ### Changed

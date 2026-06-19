@@ -353,8 +353,52 @@ body {
 #grad-stops { display: flex; flex-direction: column; gap: 4px; margin: 2px 0; }
 .grad-stop { gap: 6px; }
 .grad-stop .swatch { flex: 0 0 38px; }
-.seg { display: flex; gap: 0.75rem; }
-.seg label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.seg { display: flex; flex-wrap: wrap; gap: 0.4rem 0.75rem; flex: 1; min-width: 0; }
+.seg label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+/* A row whose control is too wide to sit beside its label in the narrow
+   inspector (e.g. the 3-option Fill segment, the gradient preset chips) stacks
+   the control under the label, full width, so nothing clips off the edge.
+   (The rightmost "Gradient" fill option used to clip off the panel's right.) */
+.row.stack { flex-direction: column; align-items: stretch; gap: 4px; }
+.row.stack > span:first-child { flex: 0 0 auto; }
+
+/* gradient — simple controls (presets / From→To / direction pad) */
+.grad-presets { display: flex; flex-wrap: wrap; gap: 4px; }
+.grad-presets .chip { flex: 1 1 64px; }
+.grad-fromto { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.grad-arrow { color: var(--muted); }
+.grad-fade { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; color: var(--muted); margin-left: auto; white-space: nowrap; }
+.dir-pad { display: grid; grid-template-columns: repeat(3, 32px); grid-auto-rows: 30px; gap: 4px; }
+.dir-pad button {
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+.dir-pad button:hover { border-color: var(--accent); }
+.dir-pad button:active { transform: translateY(1px); }
+.dir-pad button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-weak); }
+
+/* gradient — Advanced disclosure (multi-stop editor + exact coordinates) */
+.grad-advanced { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 4px; }
+.grad-advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 4px 0;
+}
+.grad-advanced > summary::-webkit-details-marker { display: none; }
+.grad-advanced > summary::before { content: "▸ "; }
+.grad-advanced[open] > summary::before { content: "▾ "; }
+.grad-advanced > summary:hover { color: var(--text); }
 
 /* ---- toast ---- */
 .toast {
