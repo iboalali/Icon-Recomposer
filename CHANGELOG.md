@@ -7,6 +7,13 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Added
+
+- **Changelog link in the top bar.** A "Changelog" link sits next to Privacy and
+  opens the app's "What's new" page.
+
 ## [1.5.2] — 2026-06-20
 
 ### Added

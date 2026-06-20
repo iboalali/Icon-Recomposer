@@ -1184,6 +1184,9 @@ function wireToolbar() {
   $('privacy-link').addEventListener('click', () => {
     tdSignal('privacyLinkClicked');
   });
+  $('changelog-link').addEventListener('click', () => {
+    tdSignal('changelogLinkClicked');
+  });
 
   $('btn-new').addEventListener('click', () => {
     if (doc().layers.length && !confirm('Start a new document? Unsaved changes will be lost.')) return;
