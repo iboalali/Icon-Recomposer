@@ -77,13 +77,15 @@ export async function signal(type, payload) {
       telemetryClientVersion: `IconRecomposer ${APP_VERSION}`,
     };
     if (TEST_MODE) body.isTestMode = true;
+    // Tag every signal with the app version so TelemetryDeck can break usage
+    // down by version (its standard "App Version" dimension reads this key).
+    const p = { 'TelemetryDeck.AppInfo.version': APP_VERSION };
     if (payload && typeof payload === 'object') {
-      const p = {};
       for (const [k, v] of Object.entries(payload)) {
         p[k] = k === 'floatValue' && typeof v === 'number' ? v : String(v);
       }
-      if (Object.keys(p).length) body.payload = p;
     }
+    body.payload = p;
     await fetch(TARGET, {
       method: 'POST',
       mode: 'cors',

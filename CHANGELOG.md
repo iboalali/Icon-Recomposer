@@ -7,6 +7,14 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [1.7.1] — 2026-06-20
+
+### Changed
+
+- Anonymous usage analytics now record the app version, so we can tell which
+  versions are in use. No new personal data — the version is already shown in
+  the app.
+
 ## [1.7.0] — 2026-06-20
 
 ### Added
