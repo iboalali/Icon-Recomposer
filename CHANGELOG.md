@@ -7,6 +7,13 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Changed
+
+- **Wider side panels.** The Layers panel (240 → 280px) and the inspector
+  (300 → 360px) are roomier, so labels and controls have more breathing room.
+
 ## [1.5.5] — 2026-06-20
 
 ### Added
