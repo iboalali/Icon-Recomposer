@@ -30,6 +30,11 @@ Planned improvements. Unordered; check off as done.
   second press clears the selection.
 
 - [ ] **More keyboard shortcuts**
-  Build on the existing set (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, Ctrl+D, Delete).
-  Candidates: select all, arrow-key nudge, bracket keys for layer order,
-  show/hide layer, group-friendly shortcuts.
+  Build on the existing set (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, Ctrl+D, Delete,
+  Ctrl/⌘+S save, Ctrl/⌘+O open). Candidates: select all, arrow-key nudge,
+  bracket keys for layer order, show/hide layer, group-friendly shortcuts.
+
+- [x] **Installable / offline (PWA)**
+  ✅ `manifest.webmanifest` + `sw.js` (cache-first app-shell, cache versioned by
+  `?v=APP_VERSION`) + registration/update-prompt in `ui.js`. Installable, fully
+  offline. Maintenance: add any new top-level file to `sw.js`'s `PRECACHE` list.

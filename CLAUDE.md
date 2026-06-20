@@ -55,6 +55,9 @@ authoring model ── derive() ──▶ derived model (flat paths + gradients)
 | `colorpicker.js` | custom in-page color popover (native `<input type=color>` clipped off-screen) |
 | `dialog.js` | in-page modal dialog (`confirmDialog()` → `Promise<boolean>`) replacing native `confirm()`/`alert()`; Esc cancels / Enter confirms, stopped at the overlay so global shortcuts don't fire |
 | `telemetry.js` | dependency-free TelemetryDeck custom-signal sender (export/open/import/new/save/undo/redo + errors); pairs with the Web SDK pageview `<script>` in `index.html` |
+| `sw.js` | PWA service worker: precaches the app shell (cache-first, same-origin only) for offline use; cache named by `?v=APP_VERSION`. **Registered from `ui.js` (`registerServiceWorker`) and paired with `manifest.webmanifest`.** |
+
+**PWA maintenance (important):** `sw.js` holds an explicit `PRECACHE` list of every file the app loads. When you **add a new top-level file** (a new ES module, asset, etc.), you **must add it to `PRECACHE`** or it won't be available offline (`addAll` is atomic, so a wrong/removed path makes install fail — caught early). The cache is versioned by `?v=APP_VERSION`, so bumping `APP_VERSION` in `model.js` is the only step needed to ship a new cached build; no separate cache-version bump.
 
 ### Implemented behavior beyond PLAN.md
 

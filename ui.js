@@ -1638,6 +1638,44 @@ function setupToolbarOverflow() {
   layout();
 }
 
+// ---- PWA service worker ----
+// Registered as sw.js?v=<APP_VERSION> so each release is a distinct worker URL
+// (the browser installs the new one and we version the cache by it). When an
+// updated worker finishes installing, prompt to reload; on accept we tell it to
+// take over and reload once it controls the page.
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  let updateAccepted = false;
+  // Reload only after the user accepted an update — ignore the initial control
+  // hand-off on first install (clients.claim) so we don't reload on first visit.
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (updateAccepted) window.location.reload();
+  });
+  async function promptUpdate(worker) {
+    const ok = await confirmDialog({
+      title: 'Update available',
+      message: 'A new version of Icon Recomposer is ready. Reload to update?',
+      confirmLabel: 'Reload',
+      cancelLabel: 'Later',
+    });
+    if (ok) { updateAccepted = true; worker.postMessage('SKIP_WAITING'); }
+  }
+  navigator.serviceWorker
+    .register('sw.js?v=' + APP_VERSION)
+    .then((reg) => {
+      if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting);
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', () => {
+          // 'installed' with an existing controller ⇒ an update (not first install).
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) promptUpdate(nw);
+        });
+      });
+    })
+    .catch((err) => console.warn('Service worker registration failed:', err));
+}
+
 // ---- init ----
 const DEFAULT_PROJECT_URL = 'assets/' + encodeURIComponent('app icon.json');
 
@@ -1647,6 +1685,7 @@ async function init() {
   wireToolbar();
   setupToolbarOverflow();
   updateHistoryButtons();
+  registerServiceWorker();
 
   // Canvas zoom/pan: wheel + trackpad pinch zoom (non-passive so we can
   // preventDefault), re-clamp on resize, and suppress middle-click autoscroll.

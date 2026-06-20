@@ -7,6 +7,16 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Added
+
+- **Installable, works offline (PWA).** Icon Recomposer can now be installed to
+  your home screen / desktop and runs fully offline — once loaded, the whole app
+  (and your last-used default) is cached, so it opens with no network. Updates
+  are picked up automatically: when a new version is available you'll be offered
+  a one-tap reload.
+
 ## [1.5.8] — 2026-06-20
 
 ### Fixed
