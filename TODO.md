@@ -17,10 +17,12 @@ Planned improvements. Unordered; check off as done.
   `@media (max-width: 820px)` rule today; needs real touch ergonomics, larger
   hit targets, and a layout that works one-panel-at-a-time on a phone.
 
-- [ ] **Zoom support for canvas**
-  Let the user zoom (and pan) the preview. The canvas is a fixed size now
-  (`.canvas-wrap { width: 70vh }`). Keep the light handle, selection overlay, and
-  drag-to-move hit-testing correct under zoom/pan.
+- [x] **Zoom support for canvas**
+  Zoom + pan the preview. ✅ View-only CSS transform on `#canvas-wrap`
+  (`appState.ui.view`); wheel / trackpad-pinch / touch-pinch zoom toward the
+  pointer (fit→8×), middle-mouse / empty-drag / two-finger pan. Coordinate math
+  (hit-test, light handle, marquee) rides the transform unchanged; exports are
+  unaffected.
 
 - [x] **Esc key removes selection**
   Pressing Escape deselects all layers. ✅ An open color popover / dialog

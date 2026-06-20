@@ -7,6 +7,18 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Added
+
+- **Zoom and pan the canvas.** Zoom in with the mouse wheel, trackpad
+  two-finger pinch, or touchscreen two-finger pinch — it zooms toward the
+  pointer, up to 8×, and never shrinks below the fit size. Pan by dragging empty
+  canvas when nothing is selected and you're zoomed in, by two-finger drag on
+  touch, or with a middle-mouse drag any time (even with a layer selected).
+  Zoom/pan is view-only: it changes nothing about the icon — every export (PNG,
+  VectorDrawable, SVG) and the project file are unaffected.
+
 ## [1.5.4] — 2026-06-20
 
 ### Added

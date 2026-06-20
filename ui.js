@@ -36,7 +36,13 @@ const $ = (id) => document.getElementById(id);
 // ---- state ----
 const appState = {
   document: sampleDocument(),
-  ui: { selectedLayerIds: [], primaryLayerId: null, selectAnchorId: null, projectName: 'icon', scaleLinked: true },
+  ui: {
+    selectedLayerIds: [], primaryLayerId: null, selectAnchorId: null,
+    projectName: 'icon', scaleLinked: true,
+    // View-only zoom/pan of the canvas (ephemeral; never saved/exported).
+    // scale 1 = fit; panX/panY are screen px applied as a CSS transform.
+    view: { scale: 1, panX: 0, panY: 0 },
+  },
 };
 const undoStack = [];
 const redoStack = [];
@@ -146,6 +152,11 @@ function render() {
   positionLightHandle();
   updateSelectionOverlay();
   updateInspector();
+
+  // Re-clamp the view against the (possibly changed) canvas size and keep the
+  // transform in sync — e.g. after a canvas resize or document load.
+  clampView();
+  applyViewTransform();
 }
 
 // ---- selection marquee ----
@@ -437,7 +448,14 @@ handle.addEventListener('pointercancel', onDragEnd);
 // selection overlay's per-frame innerHTML rebuild during a drag. The light
 // handle stopPropagations its own presses, so they never reach here.
 const canvasWrap = $('canvas-wrap');
+const stage = $('stage');
 let layerDrag = null;
+// Zoom/pan gesture state (all ephemeral; the result lives in appState.ui.view).
+const activePointers = new Map(); // pointerId → { x, y } (for 2-finger pinch)
+let pinch = null; // { distStart, midStart, scaleStart, panStart:{x,y} }
+let panDrag = null; // { pointerId, startX, startY, panX0, panY0 }
+
+const MAX_ZOOM = 8;
 
 // Geometric hit-test: topmost (front-most) filled layer under a viewport point.
 let _hitCtx = null;
@@ -478,6 +496,18 @@ function startLayerDrag(e, v) {
 }
 
 function onCanvasPointerDown(e) {
+  // Track every pointer for pinch detection. A 2nd pointer starts a pinch and
+  // takes over from any single-pointer gesture in progress.
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activePointers.size === 2) {
+    abortCanvasGestures();
+    startPinch();
+    e.preventDefault();
+    return;
+  }
+  // Middle-mouse pans always (even with a selection) — must run before the
+  // primary-button gate below.
+  if (e.button === 1) { startPanDrag(e); return; }
   if (e.button != null && e.button !== 0) return; // primary button / touch only
   const v = viewportFromEvent(e);
   const modifier = e.ctrlKey || e.metaKey || e.shiftKey;
@@ -507,10 +537,16 @@ function onCanvasPointerDown(e) {
     }
   } else if (appState.ui.selectedLayerIds.length) {
     selectLayer(null); // clicked empty canvas → deselect
+  } else if (contentOverflows()) {
+    startPanDrag(e); // empty canvas, nothing selected, zoomed in → pan
   }
 }
 
 function onCanvasPointerMove(e) {
+  // Keep the tracked position fresh for pinch math.
+  if (activePointers.has(e.pointerId)) activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch) return onPinchMove();
+  if (panDrag) return onPanMove(e);
   if (!layerDrag) return;
   const v = viewportFromEvent(e);
   const dx = v.x - layerDrag.startX;
@@ -532,6 +568,11 @@ function onCanvasPointerMove(e) {
 }
 
 function onCanvasPointerUp(e) {
+  activePointers.delete(e.pointerId);
+  // A finger lifting ends the pinch; don't silently convert a remaining finger
+  // into a pan (that causes a jump).
+  if (pinch) { pinch = null; return; }
+  if (panDrag) { endPanDrag(e); return; }
   if (!layerDrag) return;
   const moved = layerDrag.moved;
   layerDrag = null;
@@ -543,6 +584,129 @@ canvasWrap.addEventListener('pointerdown', onCanvasPointerDown);
 canvasWrap.addEventListener('pointermove', onCanvasPointerMove);
 canvasWrap.addEventListener('pointerup', onCanvasPointerUp);
 canvasWrap.addEventListener('pointercancel', onCanvasPointerUp);
+
+// ---- view-only zoom + pan (PLAN: transform #canvas-wrap; coords stay correct
+// because viewportFromEvent reads the live transformed rect, and the handle /
+// marquee ride inside canvas-wrap). The transform never touches the document,
+// so preview/PNG/SVG/VD/share are identical regardless of zoom/pan.
+function contentOverflows() {
+  return appState.ui.view.scale > 1;
+}
+// Center of the stage in client px = the transform-origin (canvas-wrap is
+// centered in the stage via place-items:center, so its center == stage center).
+function stageCenter() {
+  const r = stage.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+// Keep pan within bounds: centered when the content fits, clamped to the content
+// edges when it overflows. Uses untransformed layout size (offsetWidth/Height).
+function clampView() {
+  const v = appState.ui.view;
+  const baseW = canvasWrap.offsetWidth;
+  const baseH = canvasWrap.offsetHeight;
+  if (!baseW || !baseH) return; // pre-layout: nothing to clamp yet
+  const maxPanX = Math.max(0, (v.scale * baseW - stage.clientWidth) / 2);
+  const maxPanY = Math.max(0, (v.scale * baseH - stage.clientHeight) / 2);
+  v.panX = clamp(v.panX, -maxPanX, maxPanX);
+  v.panY = clamp(v.panY, -maxPanY, maxPanY);
+}
+// Push appState.ui.view → the CSS transform (and the cursor affordance). Written
+// as '' at rest so the DOM stays clean and there's no identity-transform blur.
+function applyViewTransform() {
+  const v = appState.ui.view;
+  canvasWrap.style.transform =
+    v.scale === 1 && v.panX === 0 && v.panY === 0
+      ? ''
+      : `translate(${v.panX}px, ${v.panY}px) scale(${v.scale})`;
+  canvasWrap.classList.toggle('panning', !!panDrag);
+  // "grab" affordance only when an empty-canvas left-drag would pan.
+  canvasWrap.classList.toggle('pannable', !panDrag && contentOverflows() && !appState.ui.selectedLayerIds.length);
+}
+// Zoom toward a client-space focal point (cursor or pinch midpoint), keeping the
+// content under that point fixed. Origin-center focal formula:
+//   panNew = k*pan + (1-k)*(focal - center),  k = scaleNew/scaleOld.
+function zoomAt(cx, cy, factor) {
+  const v = appState.ui.view;
+  const sOld = v.scale;
+  const sNew = clamp(sOld * factor, 1, MAX_ZOOM);
+  if (sNew === sOld) return;
+  const k = sNew / sOld;
+  const C = stageCenter();
+  v.panX = k * v.panX + (1 - k) * (cx - C.x);
+  v.panY = k * v.panY + (1 - k) * (cy - C.y);
+  v.scale = sNew;
+  clampView();
+  applyViewTransform();
+}
+function onCanvasWheel(e) {
+  e.preventDefault(); // also stops trackpad-pinch (ctrl+wheel) page zoom
+  let dy = e.deltaY;
+  if (e.deltaMode === 1) dy *= 16; // lines → ~px
+  else if (e.deltaMode === 2) dy *= stage.clientHeight; // pages → px
+  // Trackpad pinch (ctrlKey) sends small deltas → use a finer rate.
+  const factor = Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0015));
+  zoomAt(e.clientX, e.clientY, factor);
+}
+
+// ---- pan (middle-mouse always; empty-canvas left-drag when nothing selected
+// and zoomed in). Pan is a screen-px translate, so we track raw client coords.
+function startPanDrag(e) {
+  const v = appState.ui.view;
+  panDrag = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, panX0: v.panX, panY0: v.panY };
+  try { canvasWrap.setPointerCapture(e.pointerId); } catch (_) {}
+  e.preventDefault();
+  applyViewTransform(); // reflect grabbing cursor
+}
+function onPanMove(e) {
+  const v = appState.ui.view;
+  v.panX = panDrag.panX0 + (e.clientX - panDrag.startX);
+  v.panY = panDrag.panY0 + (e.clientY - panDrag.startY);
+  clampView();
+  applyViewTransform();
+}
+function endPanDrag(e) {
+  try { canvasWrap.releasePointerCapture(e.pointerId); } catch (_) {}
+  panDrag = null;
+  applyViewTransform(); // drop grabbing cursor
+}
+
+// ---- two-finger pinch (touch) — unifies zoom + pan in one gesture ----
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function mid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+function twoPointers() {
+  const it = activePointers.values();
+  return [it.next().value, it.next().value];
+}
+// Abort any in-progress single-pointer gesture before a pinch takes over, so a
+// half-finished layer move is committed (one undo step) and nothing dangles.
+function abortCanvasGestures() {
+  if (layerDrag) {
+    const moved = layerDrag.moved;
+    layerDrag = null;
+    if (moved) commitGesture();
+  }
+  if (panDrag) panDrag = null;
+}
+function startPinch() {
+  const [a, b] = twoPointers();
+  const v = appState.ui.view;
+  pinch = { distStart: dist(a, b) || 1, midStart: mid(a, b), scaleStart: v.scale, panStart: { x: v.panX, y: v.panY } };
+}
+function onPinchMove() {
+  const [a, b] = twoPointers();
+  if (!a || !b) return;
+  const v = appState.ui.view;
+  const C = stageCenter();
+  const m = mid(a, b);
+  const sNew = clamp(pinch.scaleStart * (dist(a, b) / pinch.distStart), 1, MAX_ZOOM);
+  const kk = sNew / pinch.scaleStart;
+  // Keep the content under the (moving) midpoint fixed → zoom + two-finger pan.
+  v.panX = kk * pinch.panStart.x + ((m.x - C.x) - kk * (pinch.midStart.x - C.x));
+  v.panY = kk * pinch.panStart.y + ((m.y - C.y) - kk * (pinch.midStart.y - C.y));
+  v.scale = sNew;
+  clampView();
+  applyViewTransform();
+}
 
 function positionLightHandle() {
   const d = doc();
@@ -1338,6 +1502,7 @@ function loadDocument(rawDoc, name) {
   appState.ui.primaryLayerId = null;
   appState.ui.selectAnchorId = null;
   appState.ui.projectName = name || 'icon';
+  appState.ui.view = { scale: 1, panX: 0, panY: 0 }; // reset zoom/pan on load
   $('doc-name').value = appState.ui.projectName;
   undoStack.length = 0;
   redoStack.length = 0;
@@ -1422,6 +1587,12 @@ async function init() {
   wireControls();
   wireToolbar();
   updateHistoryButtons();
+
+  // Canvas zoom/pan: wheel + trackpad pinch zoom (non-passive so we can
+  // preventDefault), re-clamp on resize, and suppress middle-click autoscroll.
+  stage.addEventListener('wheel', onCanvasWheel, { passive: false });
+  window.addEventListener('resize', () => { clampView(); applyViewTransform(); });
+  stage.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
 
   // Load from share link if present; otherwise open the bundled default
   // project ("app icon"), falling back to the built-in sample document if it

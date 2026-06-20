@@ -203,6 +203,9 @@ body {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  /* Claim wheel/pinch/drag gestures so the browser doesn't page-zoom or scroll
+     instead of zooming/panning the canvas. */
+  touch-action: none;
 }
 .canvas-wrap {
   position: relative;
@@ -213,7 +216,12 @@ body {
   border-radius: 14px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   overflow: hidden;
+  touch-action: none;
+  /* transform (zoom/pan) is set inline from JS; transform-origin must stay at
+     the default center — the focal-zoom math depends on it. */
 }
+.canvas-wrap.pannable { cursor: grab; }
+.canvas-wrap.panning { cursor: grabbing; }
 .checker {
   position: absolute; inset: 0;
   background-color: #cfd3da;
