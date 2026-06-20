@@ -1561,6 +1561,10 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
   else if (mod && e.key.toLowerCase() === 'd' && appState.ui.selectedLayerIds.length) { e.preventDefault(); duplicateLayers(appState.ui.selectedLayerIds.slice()); }
+  // Ctrl/Cmd+S = Save project, Ctrl/Cmd+O = Open — reuse the toolbar handlers
+  // (preventDefault overrides the browser's Save-page / Open-file defaults).
+  else if (mod && e.key.toLowerCase() === 's' && !e.shiftKey) { e.preventDefault(); $('btn-save').click(); }
+  else if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); $('file-open').click(); }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && appState.ui.selectedLayerIds.length) {
     const tag = (document.activeElement && document.activeElement.tagName) || '';
     if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {

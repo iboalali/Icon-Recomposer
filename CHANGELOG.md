@@ -9,6 +9,12 @@ into saved project files.
 
 ## [Unreleased]
 
+### Added
+
+- **Keyboard shortcuts for Save and Open.** Ctrl+S / ⌘S saves the project,
+  Ctrl+O / ⌘O opens a project or imports a vector (overriding the browser's
+  default save-page / open-file).
+
 ### Changed
 
 - **Wider side panels.** The Layers panel (240 → 280px) and the inspector
