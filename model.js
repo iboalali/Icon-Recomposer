@@ -6,7 +6,7 @@
 // the flat derived model that all three renderers consume.
 
 export const SCHEMA_VERSION = 2;
-export const APP_VERSION = '1.6.0';
+export const APP_VERSION = '1.6.1';
 export const FORMAT_ID = 'icon-emboss';
 
 let idCounter = 0;
