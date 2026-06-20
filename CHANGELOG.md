@@ -7,6 +7,18 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Fixed
+
+- **Phone layout no longer hides the canvas.** On small screens the editor used
+  a height-locked three-pane layout, so once the bottom inspector grew tall the
+  canvas collapsed to nothing and scrolled out of reach behind the panel. The
+  phone view is now a normally-scrolling page: the canvas sits at the top with a
+  fixed height (always visible), and you scroll down through Layers and the
+  inspector. The toolbar is sticky and its buttons wrap instead of overflowing
+  off the right edge.
+
 ## [1.5.6] — 2026-06-20
 
 ### Added
