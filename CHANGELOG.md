@@ -16,6 +16,12 @@ into saved project files.
   click — no automatic prompt or banner. On phones/tablets it's hidden (use the
   browser's "Add to Home screen" instead).
 
+### Changed
+
+- **Installed desktop app hides the redundant title.** When running as an
+  installed desktop app, the app icon and name are dropped from the top bar
+  (the window's title bar already shows them); the version stays.
+
 ### Fixed
 
 - **Toolbar buttons are all the same height.** The "⋯" overflow button was

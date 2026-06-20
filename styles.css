@@ -67,6 +67,14 @@ body {
   color: var(--muted);
   white-space: nowrap;
 }
+/* Installed as a desktop PWA: the window title bar already shows the app icon +
+   name, so drop them from our bar (keep the version — the chrome never shows it).
+   Scoped to fine-pointer devices: a mobile standalone PWA has no title bar, so
+   there it would leave no app identity on screen. */
+@media (display-mode: standalone) and (pointer: fine) {
+  .brand-icon,
+  .brand-name { display: none; }
+}
 .doc-name {
   background: var(--panel-2);
   border: 1px solid var(--line-2);
