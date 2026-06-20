@@ -7,7 +7,7 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
-## [Unreleased]
+## [1.5.5] — 2026-06-20
 
 ### Added
 
