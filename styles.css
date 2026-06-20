@@ -180,13 +180,6 @@ body {
 #more-menu .tbtn:hover,
 #more-menu .topbar-link:hover { background: var(--accent-weak); border: none; color: var(--text); }
 #btn-more { font-size: 16px; } /* larger ⋯ glyph; height comes from .tbtn */
-/* Hide the in-app Install button on touch devices (phones/tablets) — there the
-   browser's own "Add to Home screen" is the natural path; keep it on desktop
-   (fine pointer). The #id selector wins over .tbtn's display, so the button
-   stays hidden here even after the JS removes its `hidden` attribute. */
-@media (hover: none) and (pointer: coarse) {
-  #btn-install { display: none; }
-}
 
 /* ---- workspace ---- */
 .workspace {

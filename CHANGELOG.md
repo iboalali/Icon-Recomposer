@@ -7,6 +7,15 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [1.7.2] — 2026-06-21
+
+### Changed
+
+- **The Install button now appears on Android phones too** (Chrome/Edge), not
+  just desktop, and installs the app on tap. The browser's own install banner
+  stays suppressed so there's a single, consistent Install button. (On iPhone/iPad,
+  install is still via Safari's Share → "Add to Home Screen".)
+
 ## [1.7.1] — 2026-06-20
 
 ### Changed
