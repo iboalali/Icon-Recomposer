@@ -1676,6 +1676,40 @@ function registerServiceWorker() {
     .catch((err) => console.warn('Service worker registration failed:', err));
 }
 
+// ---- install (PWA) ----
+// Show an "Install" button only when the browser offers installation, and only
+// run the native install on an explicit click — no automatic prompt/banner.
+function setupInstall() {
+  const btn = $('btn-install');
+  if (!btn) return;
+  let deferred = null;
+  // Capturing this event (and preventing default) suppresses the browser's own
+  // auto install prompt; we surface our button instead.
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferred = e;
+    btn.hidden = false;
+    window.dispatchEvent(new Event('resize')); // let the toolbar overflow re-measure
+  });
+  btn.addEventListener('click', async () => {
+    if (!deferred) return;
+    deferred.prompt(); // native install dialog — only on this explicit click
+    let outcome = 'unknown';
+    try { outcome = (await deferred.userChoice).outcome; } catch (_) {}
+    tdSignal('installPrompt', { outcome });
+    deferred = null;
+    btn.hidden = true; // the event is single-use
+    window.dispatchEvent(new Event('resize'));
+  });
+  // Installed (via our button or the browser UI) → hide the button for good.
+  window.addEventListener('appinstalled', () => {
+    deferred = null;
+    btn.hidden = true;
+    window.dispatchEvent(new Event('resize'));
+    tdSignal('appInstalled');
+  });
+}
+
 // ---- init ----
 const DEFAULT_PROJECT_URL = 'assets/' + encodeURIComponent('app icon.json');
 
@@ -1686,6 +1720,7 @@ async function init() {
   setupToolbarOverflow();
   updateHistoryButtons();
   registerServiceWorker();
+  setupInstall();
 
   // Canvas zoom/pan: wheel + trackpad pinch zoom (non-passive so we can
   // preventDefault), re-clamp on resize, and suppress middle-click autoscroll.

@@ -7,6 +7,21 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Added
+
+- **"Install" button in the top bar.** On desktop browsers that support
+  installation, an Install button appears right of Export and installs the app on
+  click — no automatic prompt or banner. On phones/tablets it's hidden (use the
+  browser's "Add to Home screen" instead).
+
+### Fixed
+
+- **Toolbar buttons are all the same height.** The "⋯" overflow button was
+  slightly shorter than the others; all top-bar buttons now share a uniform
+  height regardless of their icon.
+
 ## [1.6.0] — 2026-06-20
 
 ### Added

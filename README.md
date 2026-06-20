@@ -9,6 +9,8 @@ A browser tool that loads vector artwork (SVG or Android **VectorDrawable** XML)
 
 Conceptually inspired by macOS Icon Composer, but deliberately constrained so the output always round-trips to a valid VectorDrawable.
 
+It's a **PWA** — installable to your home screen / desktop and fully usable offline once loaded.
+
 **Live:** https://iboalali.com/Icon-Recomposer/
 
 ## Using it
@@ -18,7 +20,8 @@ Conceptually inspired by macOS Icon Composer, but deliberately constrained so th
 - **Move, scale, and flip** layers — drag on the canvas or use the X/Y and Scale % fields, and Flip H/V to mirror. Several selected layers transform together as a group, and strokes and gradients scale along with the shape.
 - **Drag the light** on the canvas; switch it between point, distant, or off. Elevation and intensity tune the shading.
 - Give a layer a **cast shadow** (opacity, spread, distance); by default shadows clip to the layers beneath them rather than spilling onto the background.
-- Name the icon (used for export filenames) and **Export** to PNG, VectorDrawable, SVG, or save the project JSON. Undo/redo with Ctrl/Cmd+Z.
+- Name the icon (used for export filenames) and **Export** to PNG, VectorDrawable, SVG, or save the project JSON. Undo/redo with Ctrl/Cmd+Z; save/open with Ctrl/Cmd+S and Ctrl/Cmd+O.
+- **Install** the app (desktop browsers show an Install button right of Export; on phones use the browser's "Add to Home screen"). Once loaded it works **offline**.
 
 > **Open vs Import:** Open *replaces* the document with a saved project (fully re-editable). Import *appends* vector geometry as new layers. Export bakes the light/emboss into a flattened deliverable — an exported VectorDrawable is **not** a project file, so keep the JSON to keep editing.
 

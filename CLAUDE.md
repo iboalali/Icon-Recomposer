@@ -59,6 +59,8 @@ authoring model ── derive() ──▶ derived model (flat paths + gradients)
 
 **PWA maintenance (important):** `sw.js` holds an explicit `PRECACHE` list of every file the app loads. When you **add a new top-level file** (a new ES module, asset, etc.), you **must add it to `PRECACHE`** or it won't be available offline (`addAll` is atomic, so a wrong/removed path makes install fail — caught early). The cache is versioned by `?v=APP_VERSION`, so bumping `APP_VERSION` in `model.js` is the only step needed to ship a new cached build; no separate cache-version bump.
 
+**Install button (`setupInstall` in `ui.js`):** the `#btn-install` button (right of Export) is hidden until the browser fires `beforeinstallprompt`; we `preventDefault()` that event (suppressing the browser's auto-prompt) and run the native install only on an explicit click — no unsolicited prompt/banner. It's **desktop-only**: a CSS media query `(hover: none) and (pointer: coarse)` hides it on touch devices (phones/tablets), where the browser's own "Add to Home screen" is the natural path. The update flow (`registerServiceWorker`) still uses a `confirmDialog` ("Update available — reload?").
+
 ### Implemented behavior beyond PLAN.md
 
 In the code but not (fully) in `PLAN.md`:

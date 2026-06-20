@@ -96,11 +96,21 @@ body {
   background: var(--panel-2);
   color: var(--text);
   font: inherit;
+  /* Flex-center + a fixed min height so every toolbar button is the SAME height
+     regardless of its glyph size (text, icon buttons, the ⋯ overflow button). */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  line-height: 1;
   padding: 0.35rem 0.7rem;
   border-radius: 8px;
   cursor: pointer;
   user-select: none;
 }
+/* `display:inline-flex` above would otherwise defeat the `hidden` attribute
+   (e.g. the Install button starts hidden) — restore it. */
+.tbtn[hidden] { display: none; }
 .tbtn:hover { border-color: var(--accent); }
 .tbtn:active { transform: translateY(1px); }
 .tbtn.icon { font-size: 15px; line-height: 1; padding: 0.35rem 0.55rem; }
@@ -148,6 +158,7 @@ body {
 #more-menu .topbar-link {
   display: block;
   width: 100%;
+  min-height: 0; /* override the toolbar button height — these are menu rows */
   text-align: left;
   background: none;
   border: none;
@@ -160,7 +171,14 @@ body {
 }
 #more-menu .tbtn:hover,
 #more-menu .topbar-link:hover { background: var(--accent-weak); border: none; color: var(--text); }
-#btn-more { font-size: 16px; line-height: 1; padding: 0.35rem 0.6rem; }
+#btn-more { font-size: 16px; } /* larger ⋯ glyph; height comes from .tbtn */
+/* Hide the in-app Install button on touch devices (phones/tablets) — there the
+   browser's own "Add to Home screen" is the natural path; keep it on desktop
+   (fine pointer). The #id selector wins over .tbtn's display, so the button
+   stays hidden here even after the JS removes its `hidden` attribute. */
+@media (hover: none) and (pointer: coarse) {
+  #btn-install { display: none; }
+}
 
 /* ---- workspace ---- */
 .workspace {
