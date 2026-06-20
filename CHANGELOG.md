@@ -7,6 +7,23 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [1.5.8] — 2026-06-20
+
+### Fixed
+
+- **The whole canvas is always visible.** On short / wide windows the square
+  canvas could be taller than the stage, so its top and bottom were clipped and
+  zoom (which only goes in, never below fit) couldn't recover it. The canvas now
+  scales to fit the stage in both dimensions, so the full icon is always shown.
+
+### Changed
+
+- **Top bar no longer stacks messily when narrow.** As the window shrinks, the
+  toolbar now keeps to one line and moves the items that don't fit into a "⋯"
+  overflow menu (Privacy and Changelog first, then Import, etc.), instead of the
+  buttons and brand wrapping into a jumble. When it's very narrow the app icon
+  and version sit together on top with the name on the line below.
+
 ## [1.5.7] — 2026-06-20
 
 ### Fixed

@@ -28,20 +28,26 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><img class="brand-icon" src="assets/brand-64.png" alt="" />Icon&nbsp;Recomposer <span class="version" id="app-version"></span></div>
+    <div class="brand">
+      <img class="brand-icon" src="assets/brand-64.png" alt="" />
+      <span class="brand-name">Icon&nbsp;Recomposer</span>
+      <span class="version" id="app-version"></span>
+    </div>
     <input id="doc-name" class="doc-name" type="text" placeholder="icon"
            title="Document name — used for the export / save filename"
            autocomplete="off" spellcheck="false" />
 
+    <!-- Toolbar. Items carry data-priority (lower = collapses into the ⋯ menu
+         first) so the bar degrades gracefully as it narrows (see setupToolbarOverflow). -->
     <div class="toolbar">
-      <button id="btn-new" class="tbtn" title="New document">New</button>
+      <button id="btn-new" class="tbtn" data-priority="6" title="New document">New</button>
 
-      <label class="tbtn" for="file-open" title="Open project or import vector (Ctrl/⌘O)">Open</label>
+      <label class="tbtn" for="file-open" data-priority="5" title="Open project or import vector (Ctrl/⌘O)">Open</label>
       <input id="file-open" type="file" accept=".json,.svg,.xml,application/json,image/svg+xml,text/xml" hidden />
 
-      <button id="btn-save" class="tbtn" title="Save project (.json) (Ctrl/⌘S)">Save</button>
+      <button id="btn-save" class="tbtn" data-priority="4" title="Save project (.json) (Ctrl/⌘S)">Save</button>
 
-      <label class="tbtn" for="file-import">Import</label>
+      <label class="tbtn" for="file-import" data-priority="3" title="Import vector (SVG / VectorDrawable)">Import</label>
       <input id="file-import" type="file" accept=".json,.svg,.xml,application/json,image/svg+xml,text/xml" hidden />
 
       <div class="dropdown">
@@ -56,12 +62,18 @@
         </div>
       </div>
 
+      <!-- Overflow: holds whatever doesn't fit (populated by setupToolbarOverflow). -->
+      <div class="dropdown" id="more-dropdown" hidden>
+        <button id="btn-more" class="tbtn" aria-haspopup="true" title="More">⋯</button>
+        <div class="menu" id="more-menu" hidden></div>
+      </div>
+
       <span class="spacer"></span>
-      <a id="changelog-link" class="topbar-link"
+      <a id="changelog-link" class="topbar-link" data-priority="2"
          href="https://iboalali.com/app/icon_recomposer/?utm_source=icon-recomposer&amp;utm_medium=app"
          target="_blank" rel="noopener noreferrer"
          title="What's new (changelog)">Changelog</a>
-      <a id="privacy-link" class="topbar-link"
+      <a id="privacy-link" class="topbar-link" data-priority="1"
          href="https://iboalali.com/app/icon_recomposer/privacy/?utm_source=icon-recomposer&amp;utm_medium=app"
          target="_blank" rel="noopener noreferrer"
          title="Privacy Policy">Privacy</a>

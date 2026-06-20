@@ -143,8 +143,10 @@ function render() {
   $('preview').innerHTML = previewSvg(cachedDerived);
   renderLayerList();
 
-  // Canvas chrome.
+  // Canvas chrome. Set aspect-ratio and the `--ar` (width/height) the CSS uses
+  // to contain the canvas inside the stage in both dimensions.
   $('canvas-wrap').style.aspectRatio = `${d.canvas.viewportWidth} / ${d.canvas.viewportHeight}`;
+  $('canvas-wrap').style.setProperty('--ar', d.canvas.viewportWidth / d.canvas.viewportHeight);
   const bg = d.canvas.exportBackground;
   $('checker').style.display = bg.transparent ? '' : 'none';
   $('canvas-wrap').style.background = bg.transparent ? '' : bg.color;
@@ -1583,6 +1585,59 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ---- toolbar overflow (priority+ menu) ----
+// As the bar narrows, the lowest-priority items (data-priority; smaller = goes
+// first) move into a "⋯" dropdown so the toolbar always stays on one line
+// instead of wrapping/stacking messily. Items are the real DOM nodes (listeners
+// intact), moved between the toolbar and the menu.
+function setupToolbarOverflow() {
+  const toolbar = document.querySelector('.toolbar');
+  const moreWrap = $('more-dropdown');
+  const moreBtn = $('btn-more');
+  const moreMenu = $('more-menu');
+  const spacer = toolbar.querySelector('.spacer');
+  const original = Array.from(toolbar.children); // stable original order (incl. spacer, moreWrap)
+  const collapsible = original
+    .filter((el) => el.dataset && el.dataset.priority)
+    .sort((a, b) => +a.dataset.priority - +b.dataset.priority); // lowest priority collapses first
+
+  // Overflow test independent of the flex spacer: hide it, then compare the
+  // packed content width to the toolbar's width.
+  function fits() {
+    spacer.style.display = 'none';
+    const ok = toolbar.scrollWidth <= toolbar.clientWidth + 1;
+    spacer.style.display = '';
+    return ok;
+  }
+
+  function layout() {
+    // Restore everything to the toolbar in original order (pulls items back out
+    // of the menu), then collapse from scratch.
+    for (const el of original) toolbar.appendChild(el);
+    moreMenu.hidden = true;
+    moreWrap.hidden = true;
+    if (fits()) return;
+    moreWrap.hidden = false; // the ⋯ button itself takes width
+    for (const el of collapsible) {
+      if (fits()) break;
+      moreMenu.appendChild(el);
+    }
+    if (!moreMenu.children.length) moreWrap.hidden = true;
+  }
+
+  let scheduled = false;
+  const schedule = () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => { scheduled = false; layout(); });
+  };
+  window.addEventListener('resize', schedule);
+  moreBtn.addEventListener('click', (e) => { e.stopPropagation(); moreMenu.hidden = !moreMenu.hidden; });
+  document.addEventListener('click', () => { moreMenu.hidden = true; });
+
+  layout();
+}
+
 // ---- init ----
 const DEFAULT_PROJECT_URL = 'assets/' + encodeURIComponent('app icon.json');
 
@@ -1590,6 +1645,7 @@ async function init() {
   $('app-version').textContent = 'v' + APP_VERSION;
   wireControls();
   wireToolbar();
+  setupToolbarOverflow();
   updateHistoryButtons();
 
   // Canvas zoom/pan: wheel + trackpad pinch zoom (non-passive so we can
