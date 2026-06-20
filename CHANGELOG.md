@@ -7,6 +7,14 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [1.7.0] — 2026-06-20
+
+### Added
+
+- **Your work is saved automatically.** The current project is now stored in your
+  browser and restored when you reopen the page, so you pick up right where you
+  left off. (Opening a shared link still shows that shared design.)
+
 ## [1.6.1] — 2026-06-20
 
 ### Added

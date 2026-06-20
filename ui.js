@@ -64,6 +64,33 @@ const primaryLayer = () =>
   doc().layers.find((l) => appState.ui.selectedLayerIds.includes(l.id)) ||
   null;
 
+// ---- session persistence ----
+// Auto-save the current document to localStorage so work is restored on reopen.
+const SESSION_KEY = 'icon-recomposer:session';
+
+// Persist the current document (document + name only; selection and zoom/pan are
+// ephemeral by design). Best-effort: storage can be full or disabled (private
+// mode) — never let a save failure break an edit.
+function saveSession() {
+  try {
+    localStorage.setItem(SESSION_KEY, serializeProject(appState.document, appState.ui.projectName));
+  } catch (_) { /* quota exceeded / storage disabled — ignore */ }
+}
+
+// Load a previously-saved session, or null if none/invalid. Reuses parseProject,
+// which validates format, rejects newer schema, migrates v1→v2, and normalizes.
+function loadSession() {
+  let text;
+  try { text = localStorage.getItem(SESSION_KEY); } catch (_) { return null; }
+  if (!text) return null;
+  const res = parseProject(text);
+  if (!res.ok) {
+    try { localStorage.removeItem(SESSION_KEY); } catch (_) {} // drop corrupt entry
+    return null;
+  }
+  return res; // { ok, document, name }
+}
+
 // ---- undo/redo ----
 function snapshot() {
   return structuredClone(doc());
@@ -78,6 +105,7 @@ function commitGesture() {
     redoStack.length = 0;
     capStack(undoStack);
     updateHistoryButtons();
+    saveSession();
   }
 }
 // Discrete (atomic) change: snapshot, mutate, push.
@@ -88,6 +116,7 @@ function commit(mutate) {
   redoStack.length = 0;
   capStack(undoStack);
   updateHistoryButtons();
+  saveSession();
   scheduleRender();
 }
 function capStack(stack) {
@@ -99,6 +128,7 @@ function undo() {
   appState.document = undoStack.pop();
   reconcileSelection();
   updateHistoryButtons();
+  saveSession();
   scheduleRender();
   tdSignal('undo');
 }
@@ -108,6 +138,7 @@ function redo() {
   appState.document = redoStack.pop();
   reconcileSelection();
   updateHistoryButtons();
+  saveSession();
   scheduleRender();
   tdSignal('redo');
 }
@@ -1510,6 +1541,7 @@ function loadDocument(rawDoc, name) {
   redoStack.length = 0;
   gestureSnapshot = null;
   updateHistoryButtons();
+  saveSession();
   scheduleRender();
 }
 
@@ -1728,9 +1760,11 @@ async function init() {
   window.addEventListener('resize', () => { clampView(); applyViewTransform(); });
   stage.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
 
-  // Load from share link if present; otherwise open the bundled default
-  // project ("app icon"), falling back to the built-in sample document if it
-  // can't be fetched (e.g. the assets aren't available).
+  // Load priority: share link → auto-saved session → bundled default ("app
+  // icon") → built-in sample document. A share link is an explicit request, so
+  // it wins; the saved session restores the user's last work; the bundled asset
+  // is the first-visit welcome demo. A peeked share link does not overwrite the
+  // saved session — only an actual edit (commit/commitGesture) persists.
   if (location.hash && location.hash.indexOf('doc=') >= 0) {
     const res = decodeShareFragment(location.hash);
     if (res && res.ok) {
@@ -1742,17 +1776,23 @@ async function init() {
       tdError(res.error, 'share-link');
     }
   } else {
-    try {
-      const resp = await fetch(DEFAULT_PROJECT_URL);
-      if (resp.ok) {
-        const parsed = parseProject(await resp.text());
-        if (parsed.ok) {
-          appState.document = parsed.document;
-          appState.ui.projectName = parsed.name;
+    const saved = loadSession();
+    if (saved) {
+      appState.document = saved.document;
+      appState.ui.projectName = saved.name;
+    } else {
+      try {
+        const resp = await fetch(DEFAULT_PROJECT_URL);
+        if (resp.ok) {
+          const parsed = parseProject(await resp.text());
+          if (parsed.ok) {
+            appState.document = parsed.document;
+            appState.ui.projectName = parsed.name;
+          }
         }
+      } catch (_) {
+        /* keep the built-in sample document */
       }
-    } catch (_) {
-      /* keep the built-in sample document */
     }
   }
   $('doc-name').value = appState.ui.projectName;
