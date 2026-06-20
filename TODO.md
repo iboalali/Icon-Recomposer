@@ -7,10 +7,10 @@ Planned improvements. Unordered; check off as done.
   fixed (`styles.css` `.workspace { grid-template-columns: 240px 1fr 300px }`).
   Each side needs a min width so it can't be collapsed to nothing.
 
-- [ ] **Inline dialogs, not the browser ones**
+- [x] **Inline dialogs, not the browser ones**
   Replace native `confirm()` / `alert()` with in-page modal dialogs (same
-  approach as the custom color popover). Currently the only native dialog is the
-  "Start a new document?" confirm in the New button handler (`ui.js`).
+  approach as the custom color popover). ✅ Added `dialog.js` (`confirmDialog()`
+  → `Promise<boolean>`); the "Start a new document?" confirm now uses it.
 
 - [ ] **Scalable UI (phone support)**
   Make the editor usable on small / touch screens. There's a basic
@@ -22,10 +22,10 @@ Planned improvements. Unordered; check off as done.
   (`.canvas-wrap { width: 70vh }`). Keep the light handle, selection overlay, and
   drag-to-move hit-testing correct under zoom/pan.
 
-- [ ] **Esc key removes selection**
-  Pressing Escape should deselect all layers (`selectLayer(null)`). Watch the
-  ordering against the color popover, which already closes on Escape — Esc
-  should close an open popover first, then deselect on a second press.
+- [x] **Esc key removes selection**
+  Pressing Escape deselects all layers. ✅ An open color popover / dialog
+  consumes Escape first; a focused field is blurred by the first Escape, then a
+  second press clears the selection.
 
 - [ ] **More keyboard shortcuts**
   Build on the existing set (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, Ctrl+D, Delete).

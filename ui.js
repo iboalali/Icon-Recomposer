@@ -13,6 +13,7 @@ import { exportVD } from './export-vd.js';
 import { renderPng } from './export-png.js';
 import { importVector } from './import.js';
 import { createColorField } from './colorpicker.js';
+import { confirmDialog, isDialogOpen } from './dialog.js';
 import { parseColor, mix, toHex, WHITE, BLACK } from './color.js';
 import { signal as tdSignal, reportError as tdError } from './telemetry.js';
 import {
@@ -1188,8 +1189,17 @@ function wireToolbar() {
     tdSignal('changelogLinkClicked');
   });
 
-  $('btn-new').addEventListener('click', () => {
-    if (doc().layers.length && !confirm('Start a new document? Unsaved changes will be lost.')) return;
+  $('btn-new').addEventListener('click', async () => {
+    if (doc().layers.length) {
+      const ok = await confirmDialog({
+        title: 'Start a new document?',
+        message: 'Unsaved changes will be lost.',
+        confirmLabel: 'New document',
+        cancelLabel: 'Cancel',
+        danger: true,
+      });
+      if (!ok) return;
+    }
     loadDocument({ canvas: defaultCanvas(), light: defaultLight(), layers: [] }, 'icon');
     toast('New document.');
     tdSignal('new');
@@ -1392,6 +1402,15 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault();
       deleteSelected();
     }
+  } else if (e.key === 'Escape') {
+    // An open color popover / dialog consumes Escape itself (they stop the event
+    // before it reaches here). If a field is focused, Escape first leaves the
+    // field; a second press then clears the selection.
+    if (isDialogOpen()) return;
+    const el = document.activeElement;
+    const tag = (el && el.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') { el.blur(); return; }
+    if (appState.ui.selectedLayerIds.length) { e.preventDefault(); selectLayer(null); }
   }
 });
 

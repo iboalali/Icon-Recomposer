@@ -400,6 +400,30 @@ body {
 .grad-advanced[open] > summary::before { content: "▾ "; }
 .grad-advanced > summary:hover { color: var(--text); }
 
+/* ---- modal dialog (in-page confirm; replaces native confirm/alert) ---- */
+.dlg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.dlg-overlay[hidden] { display: none; }
+.dlg {
+  width: min(90vw, 360px);
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  padding: 1.1rem 1.2rem;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+}
+.dlg-title { margin: 0 0 0.45rem; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.dlg-msg { margin: 0 0 1.1rem; color: var(--muted); }
+.dlg-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+.dlg-confirm.danger { border-color: #c0463a; color: #ff6b5e; }
+.dlg-confirm.danger:hover { border-color: #ff6b5e; }
+
 /* ---- toast ---- */
 .toast {
   position: fixed;

@@ -196,5 +196,10 @@ document.addEventListener('click', (e) => {
   if (activeField && pop && !pop.contains(e.target) && e.target !== activeField.swatch) closePicker();
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && activeField) closePicker();
+  if (e.key === 'Escape' && activeField) {
+    closePicker();
+    // This Escape closed the popover — stop it here so the app's global handler
+    // (registered later on document) doesn't ALSO treat it as "deselect layer".
+    e.stopImmediatePropagation();
+  }
 });

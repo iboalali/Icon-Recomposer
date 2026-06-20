@@ -7,6 +7,20 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Added
+
+- **Press Esc to clear the layer selection.** If a control is focused, the first
+  Esc leaves the field and a second clears the selection; an open colour picker
+  or dialog closes on Esc first.
+
+### Changed
+
+- **The "Start a new document?" prompt is now an in-app dialog** instead of the
+  browser's native confirm box, matching the app's dark theme. Esc cancels,
+  Enter confirms.
+
 ## [1.5.3] — 2026-06-20
 
 ### Added
