@@ -1,6 +1,6 @@
 # Icon Recomposer — Project File Format Specification
 
-> Audience: a code-generating agent that must **produce** a valid `.json` project
+> Audience: a code-generating agent that must **produce** a valid `.icjson` project
 > file or **modify** an existing one. This is the contract enforced by
 > `model.js` (`parseProject` / `normalizeDocument`) and consumed by `derive.js`.
 > Authoritative source: `model.js`. Current `schemaVersion`: **2**.
@@ -9,9 +9,11 @@
 
 ## 1. What the file is
 
-A single UTF-8 JSON document. Extension `.json`. It fully describes one icon:
-a shared scene light plus an ordered stack of vector layers. Opening it
-**replaces** the in-app document (vs. *Import*, which appends raw geometry).
+A single UTF-8 JSON document. Extension **`.icjson`** (the app's own type; older
+`.json` files still open — detection is content-based, not by extension). It fully
+describes one icon: a shared scene light plus an ordered stack of vector layers.
+Opening it **replaces** the in-app document (vs. *Import*, which appends raw
+geometry).
 
 The same payload is also used for share-by-link: `wrapProject(...)` JSON →
 base64url → URL fragment `#doc=…`. Generators don't need to do the base64 step;

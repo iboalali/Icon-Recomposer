@@ -48,6 +48,21 @@ const undoStack = [];
 const redoStack = [];
 let gestureSnapshot = null;
 
+// ---- file binding (File System Access API) ----
+// The on-disk file the document is bound to: Save overwrites it and the watcher
+// polls it. null when the document came from upload / default / session / share
+// link (Save then falls back to a download). Watching is opt-in and the first
+// in-app edit stops it (see commit/commitGesture). All of this is progressive
+// enhancement — on browsers without the API the bindings stay null and the
+// related buttons stay hidden.
+let currentHandle = null;
+let watchTimer = null; // setInterval id while watching external edits
+let watchLastMod = 0; // last-seen file.lastModified, to detect external changes
+let watchPolling = false; // re-entrancy guard for the async poll tick
+const WATCH_MS = 700;
+const canPick = 'showOpenFilePicker' in window; // Chromium open/save pickers
+const fsaSupported = canPick || 'launchQueue' in window;
+
 // Custom color-popover fields (created once in wireControls).
 let matColorField = null;
 let bgColorField = null;
@@ -100,6 +115,7 @@ function beginGesture() {
 }
 function commitGesture() {
   if (gestureSnapshot) {
+    if (watchTimer) stopWatch('edited'); // an in-app edit stops external watching
     undoStack.push(gestureSnapshot);
     gestureSnapshot = null;
     redoStack.length = 0;
@@ -110,6 +126,7 @@ function commitGesture() {
 }
 // Discrete (atomic) change: snapshot, mutate, push.
 function commit(mutate) {
+  if (watchTimer) stopWatch('edited'); // an in-app edit stops external watching
   const snap = snapshot();
   mutate();
   undoStack.push(snap);
@@ -1408,11 +1425,20 @@ function wireToolbar() {
   $('file-open').addEventListener('change', (e) => handleFile(e, 'project'));
   $('file-import').addEventListener('change', (e) => handleFile(e, 'vector'));
 
-  $('btn-save').addEventListener('click', () => {
-    const json = serializeProject(doc(), appState.ui.projectName);
-    download(new Blob([json], { type: 'application/json' }), exportName('', 'json'));
-    tdSignal('save');
-  });
+  $('btn-save').addEventListener('click', saveProject);
+
+  // Save As + picker-based Open + Watch only exist where the File System Access
+  // API does; otherwise these stay hidden and Open uses the <input> label.
+  const btnSaveAs = $('btn-save-as');
+  if (btnSaveAs && canPick) {
+    btnSaveAs.hidden = false;
+    btnSaveAs.addEventListener('click', saveProjectAs);
+  }
+  if (canPick) {
+    const openLabel = document.querySelector('label[for="file-open"]');
+    if (openLabel) openLabel.addEventListener('click', (e) => { e.preventDefault(); openViaPicker(); });
+  }
+  setupWatch();
 
   // Export dropdown
   const menu = $('export-menu');
@@ -1440,27 +1466,56 @@ function looksLikeVector(text, filename) {
 }
 
 // Single entry for both Open and Import — detect kind, route, and tell the user
-// when it didn't match the button they pressed (Open vs Import, PLAN §7).
+// when it didn't match the button they pressed (Open vs Import, PLAN §7). The
+// <input> path can't expose a file handle, so it routes with handle = null.
 async function handleFile(e, prefer) {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
-  const text = await file.text();
+  await routeOpenedContent(await file.text(), file.name, prefer, null);
+}
 
-  const isProject = looksLikeProject(text, file.name);
-  const isVector = !isProject && looksLikeVector(text, file.name);
+// Shared open routing for the <input> fallback, the File System Access picker,
+// and launchQueue. The latter two also pass a FileSystemFileHandle so Save can
+// overwrite the file and the watcher can poll it; projects bind to it, vectors
+// (import) don't (you can't watch an appended vector).
+async function routeOpenedContent(text, name, prefer, handle) {
+  const isProject = looksLikeProject(text, name);
+  const isVector = !isProject && looksLikeVector(text, name);
   const kind = isProject ? 'project' : isVector ? 'vector' : prefer;
 
   if (kind === 'project') {
     const res = parseProject(text);
     if (!res.ok) { tdError(res.error, 'open'); return toast(res.error, 'error'); }
-    loadDocument(res.document, res.name);
+    loadDocument(res.document, res.name); // clears the previous handle (and watch)
+    setCurrentHandle(handle || null); // bind to the on-disk file, if we have one
     toast(prefer === 'vector' ? `That's a project file — opened "${res.name}".` : `Opened "${res.name}".`);
     tdSignal('open');
   } else {
-    const res = importVector(text, file.name);
+    const res = importVector(text, name);
     if (!res.ok) { tdError(res.error, 'import'); return toast(res.error, 'error'); }
-    importLayers(res, file.name, prefer === 'project');
+    importLayers(res, name, prefer === 'project');
+  }
+}
+
+// Open through the File System Access picker (Chromium) so we keep a handle for
+// Save/Watch. Accepts projects and vectors (vectors route to import). Falls back
+// to the hidden <input> on unsupported browsers via the Open label's default.
+async function openViaPicker() {
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      types: [
+        { description: 'Icon Recomposer project', accept: { 'application/x-icon-recomposer+json': ['.icjson', '.json'] } },
+        { description: 'Vector artwork (SVG / VectorDrawable)', accept: { 'image/svg+xml': ['.svg'], 'application/xml': ['.xml'] } },
+      ],
+    });
+    if (!handle) return;
+    const file = await handle.getFile();
+    await routeOpenedContent(await file.text(), handle.name, 'project', handle);
+  } catch (err) {
+    if (err && err.name === 'AbortError') return; // user cancelled the picker
+    console.error(err);
+    toast('Could not open the file: ' + (err.message || err), 'error');
   }
 }
 
@@ -1501,9 +1556,8 @@ async function doExport(action) {
       download(new Blob([svg], { type: 'image/svg+xml' }), exportName('svg', 'svg'));
       toast('Exported SVG.');
     } else if (action === 'project') {
-      const json = serializeProject(d, appState.ui.projectName);
-      download(new Blob([json], { type: 'application/json' }), exportName('', 'json'));
-      toast('Saved project JSON.');
+      downloadProject();
+      toast('Downloaded project file.');
     } else if (action === 'png-transparent' || action === 'png-bg') {
       const size = d.canvas.pngSize || 1024;
       const withBg = action === 'png-bg';
@@ -1540,9 +1594,204 @@ function loadDocument(rawDoc, name) {
   undoStack.length = 0;
   redoStack.length = 0;
   gestureSnapshot = null;
+  // A freshly loaded document is not bound to a file (stops any active watch);
+  // routeOpenedContent re-binds it right after for a project opened from disk.
+  setCurrentHandle(null);
   updateHistoryButtons();
   saveSession();
   scheduleRender();
+}
+
+// ---- file binding + external-edit watching (File System Access API) ----
+// Opt-in: opening a file just loads it; the user clicks "Watch external edits"
+// to start polling, and any in-app edit stops it (see commit/commitGesture).
+
+// Bind the document to an on-disk file (or null). Switching files stops any
+// active watch (silently — a new file replaced the watched one).
+function setCurrentHandle(handle) {
+  if (watchTimer) stopWatch('switch');
+  currentHandle = handle || null;
+  updateWatchButton();
+}
+
+function updateWatchButton() {
+  const btn = $('btn-watch');
+  if (!btn) return;
+  const watching = !!watchTimer;
+  btn.disabled = !currentHandle && !watching;
+  btn.setAttribute('aria-pressed', watching ? 'true' : 'false');
+  btn.textContent = watching ? 'Watching…' : 'Watch external edits';
+  btn.title = !currentHandle
+    ? 'Open a project file to watch it for external changes'
+    : watching
+    ? 'Stop watching the file for external changes'
+    : 'Reload the open file when an external program changes it';
+}
+
+function setupWatch() {
+  const btn = $('btn-watch');
+  if (!btn || !fsaSupported) return; // unsupported → button stays hidden
+  btn.hidden = false;
+  btn.addEventListener('click', () => { if (watchTimer) stopWatch('user'); else startWatch(); });
+  updateWatchButton();
+  window.dispatchEvent(new Event('resize')); // let the toolbar overflow re-measure
+}
+
+async function startWatch() {
+  if (!currentHandle || watchTimer) return;
+  try {
+    if (currentHandle.queryPermission) {
+      let perm = await currentHandle.queryPermission({ mode: 'read' });
+      if (perm === 'prompt' && currentHandle.requestPermission) perm = await currentHandle.requestPermission({ mode: 'read' });
+      if (perm === 'denied') return toast('Permission to read the file was denied.', 'error');
+    }
+    watchLastMod = (await currentHandle.getFile()).lastModified;
+  } catch (err) {
+    console.error(err);
+    return toast('Could not access the file to watch it.', 'error');
+  }
+  watchTimer = setInterval(pollWatch, WATCH_MS);
+  updateWatchButton();
+  toast(`Watching "${appState.ui.projectName}" — external edits reload here.`);
+  tdSignal('watchStart');
+}
+
+function stopWatch(reason) {
+  if (!watchTimer) return;
+  clearInterval(watchTimer);
+  watchTimer = null;
+  watchPolling = false;
+  updateWatchButton();
+  if (reason === 'edited') toast('Stopped watching — you edited the icon here.');
+  else if (reason === 'lost') toast('Lost access to the file — stopped watching.', 'warn');
+  else if (reason === 'user') toast('Stopped watching for external edits.');
+  // 'switch' is silent (a newly opened file replaced the watched one).
+  if (reason !== 'switch') tdSignal('watchStop', { reason });
+}
+
+async function pollWatch() {
+  if (watchPolling || !currentHandle) return;
+  watchPolling = true;
+  try {
+    const file = await currentHandle.getFile();
+    if (file.lastModified > watchLastMod) {
+      const res = parseProject(await file.text());
+      if (res.ok) {
+        watchLastMod = file.lastModified;
+        reloadFromWatch(res);
+      }
+      // A parse failure here is almost always a half-written file mid-save: leave
+      // watchLastMod untouched so the next tick retries once the writer finishes.
+    }
+  } catch (err) {
+    console.error(err);
+    stopWatch('lost');
+  } finally {
+    watchPolling = false;
+  }
+}
+
+// Lighter than loadDocument: reflects external changes while PRESERVING the
+// current zoom/pan and selection, and stays silent (the live canvas is the
+// feedback). Watching has already stopped any in-app edits, so clearing the
+// undo history is safe — the file is the source of truth.
+function reloadFromWatch(res) {
+  appState.document = res.document; // already normalized by parseProject
+  appState.ui.projectName = res.name;
+  $('doc-name').value = res.name;
+  reconcileSelection();
+  undoStack.length = 0;
+  redoStack.length = 0;
+  gestureSnapshot = null;
+  updateHistoryButtons();
+  saveSession();
+  scheduleRender();
+}
+
+// ---- save (overwrite bound file) + save as (new file) ----
+// The current download behavior, kept as the universal fallback.
+function downloadProject() {
+  const json = serializeProject(doc(), appState.ui.projectName);
+  download(new Blob([json], { type: 'application/json' }), exportName('', 'icjson'));
+}
+
+async function writeHandle(handle) {
+  const json = serializeProject(doc(), appState.ui.projectName);
+  const writable = await handle.createWritable();
+  await writable.write(json);
+  await writable.close();
+  // Don't let the watcher (if running) reload from our own write.
+  if (watchTimer) { try { watchLastMod = (await handle.getFile()).lastModified; } catch (_) {} }
+}
+
+// Lazily upgrade an opened (read) handle to read-write on the Save user gesture.
+async function ensureWritable(handle) {
+  if (!handle.queryPermission) return true; // assume writable on older impls
+  if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') return true;
+  if (!handle.requestPermission) return false;
+  return (await handle.requestPermission({ mode: 'readwrite' })) === 'granted';
+}
+
+// Save: overwrite the bound file; on no handle or refused permission, download a
+// copy like before and tell the user why.
+async function saveProject() {
+  if (currentHandle) {
+    let granted = false;
+    try { granted = await ensureWritable(currentHandle); } catch (_) { granted = false; }
+    if (!granted) {
+      downloadProject();
+      toast('Permission to edit the file was denied — downloaded a copy instead.', 'warn');
+      return tdSignal('save', { mode: 'download-denied' });
+    }
+    try {
+      await writeHandle(currentHandle);
+      toast('Saved.');
+      tdSignal('save', { mode: 'overwrite' });
+    } catch (err) {
+      console.error(err);
+      downloadProject();
+      toast('Could not write the file — downloaded a copy instead.', 'warn');
+      tdSignal('save', { mode: 'download-error' });
+    }
+    return;
+  }
+  downloadProject(); // nothing bound → behave like today
+  tdSignal('save', { mode: 'download' });
+}
+
+// Save As: pick a new file (Chromium) and bind to it; the picker grants
+// read-write, so no separate permission prompt. Falls back to a download.
+async function saveProjectAs() {
+  if (!canPick) { downloadProject(); return tdSignal('save', { mode: 'download' }); }
+  let handle;
+  try {
+    handle = await window.showSaveFilePicker({
+      suggestedName: fileBase() + '.icjson',
+      types: [{ description: 'Icon Recomposer project', accept: { 'application/x-icon-recomposer+json': ['.icjson'] } }],
+    });
+  } catch (err) {
+    if (err && err.name === 'AbortError') return; // user cancelled
+    console.error(err);
+    downloadProject();
+    toast('Could not save the file — downloaded a copy instead.', 'warn');
+    return tdSignal('save', { mode: 'download-error' });
+  }
+  // Adopt the chosen filename as the document name BEFORE writing so the file's
+  // own `name` field matches.
+  const base = handle.name.replace(/\.(icjson|json)$/i, '');
+  if (base) { appState.ui.projectName = base; $('doc-name').value = base; }
+  try {
+    await writeHandle(handle);
+    setCurrentHandle(handle);
+    saveSession();
+    toast(`Saved as "${handle.name}".`);
+    tdSignal('save', { mode: 'saveas' });
+  } catch (err) {
+    console.error(err);
+    downloadProject();
+    toast('Could not save the file — downloaded a copy instead.', 'warn');
+    tdSignal('save', { mode: 'download-error' });
+  }
 }
 
 // ---- helpers ----
@@ -1595,10 +1844,11 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
   else if (mod && e.key.toLowerCase() === 'd' && appState.ui.selectedLayerIds.length) { e.preventDefault(); duplicateLayers(appState.ui.selectedLayerIds.slice()); }
-  // Ctrl/Cmd+S = Save project, Ctrl/Cmd+O = Open — reuse the toolbar handlers
+  // Ctrl/Cmd+S = Save, Ctrl/Cmd+Shift+S = Save As, Ctrl/Cmd+O = Open
   // (preventDefault overrides the browser's Save-page / Open-file defaults).
-  else if (mod && e.key.toLowerCase() === 's' && !e.shiftKey) { e.preventDefault(); $('btn-save').click(); }
-  else if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); $('file-open').click(); }
+  else if (mod && e.key.toLowerCase() === 's' && e.shiftKey) { e.preventDefault(); saveProjectAs(); }
+  else if (mod && e.key.toLowerCase() === 's' && !e.shiftKey) { e.preventDefault(); saveProject(); }
+  else if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); if (canPick) openViaPicker(); else $('file-open').click(); }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && appState.ui.selectedLayerIds.length) {
     const tag = (document.activeElement && document.activeElement.tagName) || '';
     if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
@@ -1753,6 +2003,24 @@ async function init() {
   updateHistoryButtons();
   registerServiceWorker();
   setupInstall();
+
+  // File Handling API: when the installed PWA is launched by double-clicking a
+  // .icjson file, open it (with its handle, so Save/Watch work). Opt-in: this
+  // does NOT auto-start watching. An ordinary launch delivers no files → no-op,
+  // so the default/session/share load below still runs.
+  if ('launchQueue' in window && 'setConsumer' in window.launchQueue) {
+    launchQueue.setConsumer(async (params) => {
+      if (!params || !params.files || !params.files.length) return;
+      try {
+        const handle = params.files[0];
+        const file = await handle.getFile();
+        await routeOpenedContent(await file.text(), handle.name, 'project', handle);
+      } catch (err) {
+        console.error(err);
+        toast('Could not open the file.', 'error');
+      }
+    });
+  }
 
   // Canvas zoom/pan: wheel + trackpad pinch zoom (non-passive so we can
   // preventDefault), re-clamp on resize, and suppress middle-click autoscroll.

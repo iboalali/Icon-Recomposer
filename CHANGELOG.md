@@ -11,9 +11,25 @@ into saved project files.
 
 ### Added
 
-- **`PROJECT_FORMAT.md`** — a technical specification of the `.json` project file
-  format, documenting every field, valid ranges, defaults, and the coordinate/color
+- **Watch external edits.** On Chromium browsers (Chrome/Edge desktop), after you
+  open a project you can click **"Watch external edits"** to have the app reload it
+  automatically whenever another program changes the file — handy for editing a
+  project in a text editor or generating one from a script and seeing it live. It's
+  opt-in, and the moment you edit in the app yourself, watching stops. Zoom and pan
+  are kept across reloads.
+- **Open project files by double-clicking them.** When the app is installed,
+  `.icjson` project files open in it directly from your file manager.
+- **`PROJECT_FORMAT.md`** — a technical specification of the project file format,
+  documenting every field, valid ranges, defaults, and the coordinate/color
   conventions, so the format can be generated and edited by external tools.
+
+### Changed
+
+- **Projects now save as `.icjson`** (previously `.json`). Older `.json` projects
+  still open normally. On Chromium, **Save now overwrites the file you opened**
+  (no more duplicate downloads), and a new **Save As…** button writes a new file;
+  if the browser doesn't support this or you decline permission, Save downloads a
+  copy as before.
 
 ## [1.7.2] — 2026-06-21
 

@@ -51,9 +51,18 @@
       <button id="btn-new" class="tbtn" data-priority="6" title="New document">New</button>
 
       <label class="tbtn" for="file-open" data-priority="5" title="Open project or import vector (Ctrl/⌘O)">Open</label>
-      <input id="file-open" type="file" accept=".json,.svg,.xml,application/json,image/svg+xml,text/xml" hidden />
+      <input id="file-open" type="file" accept=".icjson,.json,.svg,.xml,application/json,image/svg+xml,text/xml" hidden />
 
-      <button id="btn-save" class="tbtn" data-priority="4" title="Save project (.json) (Ctrl/⌘S)">Save</button>
+      <!-- Watch (File System Access API): shown only on browsers that support it;
+           opt-in — reloads the open file when an external program changes it. -->
+      <button id="btn-watch" class="tbtn" data-priority="3" hidden aria-pressed="false"
+              title="Reload the open file when an external program changes it">Watch external edits</button>
+
+      <button id="btn-save" class="tbtn" data-priority="4" title="Save project (.icjson) (Ctrl/⌘S)">Save</button>
+
+      <!-- Save As (File System Access API): shown only where supported. -->
+      <button id="btn-save-as" class="tbtn" data-priority="4" hidden
+              title="Save to a new file (Ctrl/⌘+Shift+S)">Save As…</button>
 
       <label class="tbtn" for="file-import" data-priority="3" title="Import vector (SVG / VectorDrawable)">Import</label>
       <input id="file-import" type="file" accept=".json,.svg,.xml,application/json,image/svg+xml,text/xml" hidden />
@@ -65,7 +74,7 @@
           <button data-export="png-bg">PNG · with background</button>
           <button data-export="vd">VectorDrawable XML</button>
           <button data-export="svg">SVG</button>
-          <button data-export="project">Project JSON</button>
+          <button data-export="project">Project file (.icjson)</button>
           <button data-export="share">Copy share link</button>
         </div>
       </div>
