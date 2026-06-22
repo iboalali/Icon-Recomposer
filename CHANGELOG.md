@@ -7,6 +7,14 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Added
+
+- **`PROJECT_FORMAT.md`** — a technical specification of the `.json` project file
+  format, documenting every field, valid ranges, defaults, and the coordinate/color
+  conventions, so the format can be generated and edited by external tools.
+
 ## [1.7.2] — 2026-06-21
 
 ### Changed
