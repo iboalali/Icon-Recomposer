@@ -174,8 +174,8 @@ track = {
 
 A small, explicit **allow-list** of animatable paths — not arbitrary
 reflection. Each entry maps a string to a getter/setter pair against the
-document, plus a `type`. Phase 1 allow-list (numeric/color/transform/alpha
-only — see §9.2):
+document, plus a `type`. Phase 1 allow-list (numeric / color / transform /
+alpha / **gradient stops** — see §9.2):
 
 | target pattern | type | notes |
 | --- | --- | --- |
@@ -190,7 +190,9 @@ only — see §9.2):
 | `layers[i].transform.translateX` / `.translateY` | number | |
 | `layers[i].transform.rotation` | angle | |
 | `layers[i].transform.scaleX` / `.scaleY` | number | |
-| `layers[i].opacity` *(if present)* / `layers[i].material.gradient.stops[j].offset` | number | gradient-stop animation is a stretch goal for P1 |
+| `layers[i].material.gradient.stops[j].offset` | number | **in P1** (decision G); 0–1, keep stops ordered |
+| `layers[i].material.gradient.stops[j].color` | color | **in P1** (decision G); OKLab mix |
+| `layers[i].material.gradient.stops[j].alpha` | number | **in P1** (decision G); 0–1 |
 
 **Layer identity gotcha:** index-based paths (`layers[2]`) break if layers are
 reordered/deleted. **Store `layerId` on the track, resolve index at
@@ -487,15 +489,16 @@ Per `CLAUDE.md` (serve + `google-chrome --headless=new --dump-dom`):
 - **E. Motion export priority** — ✅ *PNG-sequence first (easy route), then
   WebCodecs. `ffmpeg.wasm` not bundled; parked as an optional on-demand download
   for the future.* (§8)
+- **G. Gradient-stop animation in Phase 1** — ✅ *include
+  `material.gradient.stops[j].offset / color / alpha` in the P1 allow-list*
+  (§5.3). Build notes: keep stop offsets ordered after interpolation; only
+  meaningful on layers whose `fillMode === 'gradient'`.
 
 **Still open (sub-decisions, resolve during build):**
 - **D1. Track-less property edits** — auto-key toggle *(recommended)* vs.
   always-on auto-key vs. explicit-◆-only. (§9.3)
 - **F. Easing set for Phase 1** — confirm `linear / easeIn / easeOut /
   easeInOut / hold`; `cubicBezier` deferred. (§5.2)
-- **G. Gradient-stop animation in Phase 1** — include
-  `material.gradient.stops[j].offset/color` in the P1 allow-list, or defer to
-  Phase 1.5? (§5.3)
 
 ---
 
