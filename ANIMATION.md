@@ -164,9 +164,9 @@ track = {
 
 - `t` is in **seconds**, clamped to `[0, duration]`, sorted ascending.
 - `easing` is the curve **leaving** that key toward the next (held on the
-  left key, standard convention). Set: `linear`, `easeIn`, `easeOut`,
-  `easeInOut`, `hold` (step). A `cubicBezier` form (`[x1,y1,x2,y2]`) is a
-  natural later addition; not Phase 1.
+  left key, standard convention). **DECIDED (F): Phase 1 set is** `linear`,
+  `easeIn`, `easeOut`, `easeInOut`, `hold` (step). A `cubicBezier` form
+  (`[x1,y1,x2,y2]`) is a natural later addition; **not Phase 1.**
 - Before the first key / after the last key, the value is **held** (clamped),
   not extrapolated.
 
@@ -404,10 +404,12 @@ interpolated clone, which is discarded each frame. The clone is read-only output
 of `documentAt`. Inserting/moving/deleting a keyframe is itself an undoable
 `commit`.
 
-**Open sub-decision D1 (§10):** auto-key toggle (recommended) vs. always-on
-auto-key (every edit on any property keyframes — simpler, but easy to litter
-tracks) vs. explicit-◆-only (no auto-key; tracks only via the per-control
-affordance — safest, least magical).
+**DECIDED (D1): auto-key toggle.** A global record/auto-key toggle lives in the
+transport. **Off (default):** editing a track-less property changes its static
+base value (today's behavior). **On:** editing a track-less property creates a
+track and drops the first key at the playhead. The per-control "◆" affordance
+always creates a track + key regardless of the toggle. (Editing a property that
+*already* has a track always sets a keyframe, independent of the toggle.)
 
 ### 9.4 Timeline UI
 
@@ -493,12 +495,14 @@ Per `CLAUDE.md` (serve + `google-chrome --headless=new --dump-dom`):
   `material.gradient.stops[j].offset / color / alpha` in the P1 allow-list*
   (§5.3). Build notes: keep stop offsets ordered after interpolation; only
   meaningful on layers whose `fillMode === 'gradient'`.
+- **D1. Track-less property edits** — ✅ *auto-key toggle in the transport; off
+  edits the static base value, on creates a track; per-control ◆ always creates
+  a track.* (§9.3)
+- **F. Easing set for Phase 1** — ✅ *`linear / easeIn / easeOut / easeInOut /
+  hold`; `cubicBezier` deferred.* (§5.2)
 
-**Still open (sub-decisions, resolve during build):**
-- **D1. Track-less property edits** — auto-key toggle *(recommended)* vs.
-  always-on auto-key vs. explicit-◆-only. (§9.3)
-- **F. Easing set for Phase 1** — confirm `linear / easeIn / easeOut /
-  easeInOut / hold`; `cubicBezier` deferred. (§5.2)
+**Still open:** none. All Phase 1 design decisions are resolved; remaining
+unknowns are implementation details to settle in code.
 
 ---
 
