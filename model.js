@@ -5,7 +5,9 @@
 // a layers[] array, each layer a pathData + material. derive() turns this into
 // the flat derived model that all three renderers consume.
 
-export const SCHEMA_VERSION = 2;
+import { propType, coerceKeyValue, EASINGS_LIST } from './animate.js';
+
+export const SCHEMA_VERSION = 3;
 export const APP_VERSION = '1.8.0';
 export const FORMAT_ID = 'icon-emboss';
 
@@ -106,6 +108,15 @@ export function defaultCanvas() {
   };
 }
 
+// ---- timeline (raster-only animation; ANIMATION.md §5.1) ----
+// Disabled by default: a document with no timeline (or enabled:false / no
+// tracks) behaves EXACTLY as the static app. Persisted in the project file and
+// undone like any other document state; the playhead/play state are ephemeral
+// (live in appState.ui, never serialized — same split as zoom/pan).
+export function defaultTimeline() {
+  return { enabled: false, duration: 3, fps: 30, loop: true, tracks: [] };
+}
+
 // ---- rounded-rect path helper (for the sample doc) ----
 export function roundedRectPath(x, y, w, h, r) {
   r = Math.min(r, w / 2, h / 2);
@@ -152,6 +163,7 @@ export function sampleDocument() {
     canvas: defaultCanvas(),
     light: defaultLight(),
     layers: [plate, glyph],
+    timeline: defaultTimeline(),
   };
 }
 
@@ -180,7 +192,57 @@ export function normalizeDocument(input) {
     seenIds.add(l.id);
   }
 
-  return { canvas, light, layers };
+  const timeline = normalizeTimeline(doc.timeline, seenIds);
+
+  return { canvas, light, layers, timeline };
+}
+
+// Coerce a (possibly hand-edited / older) timeline into a valid one. Tracks
+// whose target prop isn't animatable, or whose layerId no longer resolves, are
+// dropped (so deleting a layer cleans up its tracks on the next load). Keys are
+// coerced to their type, clamped to [0, duration], and sorted.
+function normalizeTimeline(input, layerIdSet) {
+  const t = input && typeof input === 'object' ? input : {};
+  const num = (v, d) => (isFinite(+v) ? +v : d);
+  const duration = Math.min(600, Math.max(0.1, num(t.duration, 3)));
+  const fps = Math.round(Math.min(120, Math.max(1, num(t.fps, 30))));
+  const tracksIn = Array.isArray(t.tracks) ? t.tracks : [];
+  const tracks = [];
+  for (const tr of tracksIn) {
+    const v = normalizeTrack(tr, layerIdSet, duration);
+    if (v) tracks.push(v);
+  }
+  return { enabled: !!t.enabled, duration, fps, loop: t.loop !== false, tracks };
+}
+
+const EASING_SET = new Set(EASINGS_LIST);
+function normalizeTrack(track, layerIdSet, duration) {
+  if (!track || typeof track !== 'object') return null;
+  const scope = track.scope === 'scene' ? 'scene' : 'layer';
+  const prop = typeof track.prop === 'string' ? track.prop : '';
+  const type = propType(scope, prop);
+  if (!type) return null; // unknown / disallowed property → drop
+  let layerId = null;
+  if (scope === 'layer') {
+    layerId = track.layerId;
+    if (!layerId || !layerIdSet.has(layerId)) return null; // unresolvable layer → drop
+  }
+  const num = (v, d) => (isFinite(+v) ? +v : d);
+  const keysIn = Array.isArray(track.keys) ? track.keys : [];
+  const keys = keysIn
+    .map((k) => {
+      const value = coerceKeyValue(type, k && k.value);
+      if (value === undefined) return null;
+      return {
+        t: Math.min(duration, Math.max(0, num(k && k.t, 0))),
+        value,
+        easing: EASING_SET.has(k && k.easing) ? k.easing : 'linear',
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.t - b.t);
+  if (!keys.length) return null;
+  return { id: track.id || newId('trk'), scope, layerId, prop, type, keys };
 }
 
 // Coerce a (possibly hand-edited) transform into all-numeric fields, or null.
@@ -233,6 +295,10 @@ function migrate(payload) {
   // additive — normalizeLayer fills `gradient: null` for old docs, so no
   // structural transform is needed here.
   if (v < 2) v = 2;
+  // v2 → v3: added document.timeline (raster-only animation). Additive —
+  // normalizeDocument fills a default disabled timeline, so old docs load
+  // unchanged and animation stays off until the user enables it.
+  if (v < 3) v = 3;
   return payload.document;
 }
 

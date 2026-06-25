@@ -8,6 +8,7 @@
 
 import { derive, bakedOutline } from './derive.js';
 import * as P from './path.js';
+import { documentAt, propType, getAtPath } from './animate.js';
 import { previewSvg, standaloneSvg } from './svg.js';
 import { exportVD } from './export-vd.js';
 import { renderPng } from './export-png.js';
@@ -42,6 +43,9 @@ const appState = {
     // View-only zoom/pan of the canvas (ephemeral; never saved/exported).
     // scale 1 = fit; panX/panY are screen px applied as a CSS transform.
     view: { scale: 1, panX: 0, panY: 0 },
+    // Timeline playback (ephemeral; never serialized — like `view`). time =
+    // playhead seconds; autokey = "record edits as keyframes" (ANIMATION.md D1).
+    playback: { time: 0, playing: false, scrubbing: false, autokey: false, selKey: null },
   },
 };
 const undoStack = [];
@@ -71,6 +75,14 @@ let gradFromField = null; // simple gradient: first stop's color
 let gradToField = null; //   simple gradient: last stop's color
 
 const doc = () => appState.document;
+// The DOCUMENT AS DISPLAYED: the base document interpolated at the playhead when
+// a timeline is animating, else the base itself. Set by render(); read ONLY by
+// render-time display code (preview, inspector values, light handle, marquee) so
+// the inspector shows animated values. All EDIT handlers mutate the base doc()
+// directly — never this clone, which is discarded each frame (ANIMATION.md §9.3).
+let viewDoc = null;
+const view = () => viewDoc || appState.document;
+const pb = () => appState.ui.playback;
 // Selection is a set of layer ids; the "primary" (last-clicked) layer's values
 // populate the inspector, while edits apply to every selected layer.
 const selectedLayers = () => doc().layers.filter((l) => appState.ui.selectedLayerIds.includes(l.id));
@@ -182,10 +194,20 @@ function scheduleRender() {
   });
 }
 
+// True when a timeline is enabled and has at least one track — i.e. the document
+// should be interpolated at the playhead for display/export.
+function isAnimating(d) {
+  const tl = d.timeline;
+  return !!(tl && tl.enabled && tl.tracks && tl.tracks.length);
+}
+
 let cachedDerived = null;
 function render() {
   const d = doc();
-  cachedDerived = derive(d);
+  // Pre-pass: interpolate at the playhead (ANIMATION.md §2). documentAt returns
+  // the SAME object when not animating, so the static path is unchanged.
+  viewDoc = isAnimating(d) ? documentAt(d, clampTime(pb().time)) : d;
+  cachedDerived = derive(viewDoc);
 
   // Derived views.
   $('preview').innerHTML = previewSvg(cachedDerived);
@@ -202,6 +224,7 @@ function render() {
   positionLightHandle();
   updateSelectionOverlay();
   updateInspector();
+  renderTimeline();
 
   // Re-clamp the view against the (possibly changed) canvas size and keep the
   // transform in sync — e.g. after a canvas resize or document load.
@@ -220,7 +243,11 @@ function updateSelectionOverlay() {
   const d = doc();
   ov.setAttribute('viewBox', `0 0 ${d.canvas.viewportWidth} ${d.canvas.viewportHeight}`);
 
-  const sel = selectedLayers().filter((l) => l.visible && l.pathData);
+  // Outline from the DISPLAYED layers so the marquee tracks animated transforms.
+  const vlayers = view().layers;
+  const sel = selectedLayers()
+    .map((l) => vlayers.find((x) => x.id === l.id) || l)
+    .filter((l) => l.visible && l.pathData);
   const outline = sel.map((l) => bakedOutline(l)).join('');
   const key = outline ? sel.map((l) => l.id).join(',') + '|' + outline : '';
   if (key === lastSelKey) return;
@@ -479,6 +506,11 @@ function onDragMove(e) {
   if (!dragging) return;
   const v = viewportFromEvent(e);
   applyLightFromViewport(v.x, v.y);
+  // Auto-key the dragged light (the handle drives position for a point light,
+  // azimuth+elevation for a distant one). No-op unless REC/track per the rule.
+  const type = doc().light.type;
+  if (type === 'point') { recordKeyframe('scene', 'light.position.x'); recordKeyframe('scene', 'light.position.y'); }
+  else if (type === 'distant') { recordKeyframe('scene', 'light.azimuth'); recordKeyframe('scene', 'light.elevation'); }
   scheduleRender();
 }
 function onDragEnd(e) {
@@ -759,7 +791,7 @@ function onPinchMove() {
 }
 
 function positionLightHandle() {
-  const d = doc();
+  const d = view(); // follow the animated light position during playback/scrub
   // Hide the handle when the light is off (nothing to drag).
   if (d.light.type === 'off') {
     handle.style.display = 'none';
@@ -800,13 +832,17 @@ function updateInspector() {
   const showLayer = count >= 1 && !!layer;
   $('scene-panel').hidden = showLayer;
   $('layer-panel').hidden = !showLayer;
-  if (showLayer) updateLayerControls(layer, count);
-  else updateSceneControls();
+  if (showLayer) {
+    // Display the DISPLAYED (interpolated) layer so the inspector reflects the
+    // animated state; edits still resolve the base layer via primaryLayer().
+    const vl = view().layers.find((l) => l.id === layer.id) || layer;
+    updateLayerControls(vl, count);
+  } else updateSceneControls();
 }
 
 function updateSceneControls() {
   const d = doc();
-  const L = d.light;
+  const L = view().light; // show animated light values; edits mutate doc().light
   setVal($('light-type'), L.type);
   const off = L.type === 'off';
   const point = L.type === 'point';
@@ -1048,11 +1084,11 @@ function updateGradientEditor(layer) {
       row.append(sw, off, al, del);
       cont.appendChild(row);
       const field = createColorField(sw, {
-        onInput: (hex) => { beginGesture(); withPrimary((l) => setStop(l, i, { color: hex })); scheduleRender(); },
+        onInput: (hex) => { beginGesture(); withPrimary((l) => setStop(l, i, { color: hex })); recordKeyframe('layer', `material.gradient.stops.${i}.color`); scheduleRender(); },
         onCommit: commitGesture,
       });
-      liveInput(off, (el) => { const v = +el.value; if (isFinite(v)) withPrimary((l) => setStop(l, i, { offset: clamp(v, 0, 1) })); });
-      liveInput(al, (el) => { const v = +el.value; if (isFinite(v)) withPrimary((l) => setStop(l, i, { alpha: clamp(v, 0, 1) })); });
+      animLiveInput(off, 'layer', `material.gradient.stops.${i}.offset`, (el) => { const v = +el.value; if (isFinite(v)) withPrimary((l) => setStop(l, i, { offset: clamp(v, 0, 1) })); });
+      animLiveInput(al, 'layer', `material.gradient.stops.${i}.alpha`, (el) => { const v = +el.value; if (isFinite(v)) withPrimary((l) => setStop(l, i, { alpha: clamp(v, 0, 1) })); });
       gradStops.push({ field, off, al });
     });
   }
@@ -1095,14 +1131,76 @@ function liveInput(el, mutate) {
   el.addEventListener('change', commitGesture);
 }
 
+// ---- keyframe recording (auto-key; ANIMATION.md §9.3, decision D/D1) ----
+// Clamp a time to the timeline's [0, duration].
+function clampTime(t) {
+  const tl = doc().timeline;
+  const dur = tl && isFinite(+tl.duration) ? +tl.duration : 0;
+  return clamp(t || 0, 0, dur);
+}
+// Find an existing track for (scope, layer, prop). Scene tracks have no layerId.
+function findTrack(scope, layerId, prop) {
+  const tl = doc().timeline;
+  if (!tl) return null;
+  return tl.tracks.find((tr) => tr.scope === scope && tr.prop === prop && (scope === 'scene' || tr.layerId === layerId)) || null;
+}
+// Insert/replace a keyframe at time t (replace if one sits at ~t, else insert
+// sorted). New keys default to linear easing.
+function upsertKey(track, t, value) {
+  const i = track.keys.findIndex((k) => Math.abs(k.t - t) < 1e-4);
+  if (i >= 0) track.keys[i].value = value;
+  else {
+    track.keys.push({ t, value, easing: 'linear' });
+    track.keys.sort((a, b) => a.t - b.t);
+  }
+}
+// After a base edit applied inside a gesture, drop a keyframe for `prop` at the
+// playhead — but only if the timeline is enabled AND (REC is on OR a track for
+// this prop already exists). Otherwise the edit just changed the static base
+// value, exactly as before. The keyframe mutates doc().timeline, which is part
+// of the gesture snapshot, so it's one undo step with the edit.
+function recordKeyframe(scope, prop) {
+  const tl = doc().timeline;
+  if (!tl || !tl.enabled) return; // animation off → plain static edit
+  const layerId = scope === 'layer' ? (primaryLayer() && primaryLayer().id) : null;
+  if (scope === 'layer' && !layerId) return;
+  let track = findTrack(scope, layerId, prop);
+  if (!track && !pb().autokey) return; // not recording and no track → skip
+  const type = propType(scope, prop);
+  if (!type) return;
+  const src = scope === 'scene' ? doc() : primaryLayer();
+  const raw = getAtPath(src, prop);
+  if (raw == null) return;
+  const value = type === 'color' ? String(raw).slice(0, 7) : +raw;
+  if (type !== 'color' && !isFinite(value)) return;
+  if (!track) {
+    track = { id: newId('trk'), scope, layerId, prop, type, keys: [] };
+    tl.tracks.push(track);
+  }
+  upsertKey(track, clampTime(pb().time), value);
+}
+// liveInput + auto-key: runs the base mutation, then records a keyframe for the
+// given (scope, prop) per the rule above. `prop` may be an array (e.g. linked
+// scale touches both axes). Use for animatable controls.
+function animLiveInput(el, scope, prop, mutate) {
+  const props = Array.isArray(prop) ? prop : [prop];
+  el.addEventListener('input', () => {
+    beginGesture();
+    mutate(el);
+    for (const p of props) recordKeyframe(scope, p);
+    scheduleRender();
+  });
+  el.addEventListener('change', commitGesture);
+}
+
 function wireControls() {
   // Scene · light
   liveInput($('light-type'), (el) => { doc().light.type = el.value; });
-  liveInput($('light-x'), (el) => { const v = +el.value; if (isFinite(v)) doc().light.position.x = clamp(v, 0, doc().canvas.viewportWidth); });
-  liveInput($('light-y'), (el) => { const v = +el.value; if (isFinite(v)) doc().light.position.y = clamp(v, 0, doc().canvas.viewportHeight); });
-  liveInput($('light-azimuth'), (el) => { doc().light.azimuth = +el.value; });
-  liveInput($('light-elevation'), (el) => { doc().light.elevation = +el.value; });
-  liveInput($('light-intensity'), (el) => { doc().light.intensity = +el.value; });
+  animLiveInput($('light-x'), 'scene', 'light.position.x', (el) => { const v = +el.value; if (isFinite(v)) doc().light.position.x = clamp(v, 0, doc().canvas.viewportWidth); });
+  animLiveInput($('light-y'), 'scene', 'light.position.y', (el) => { const v = +el.value; if (isFinite(v)) doc().light.position.y = clamp(v, 0, doc().canvas.viewportHeight); });
+  animLiveInput($('light-azimuth'), 'scene', 'light.azimuth', (el) => { doc().light.azimuth = +el.value; });
+  animLiveInput($('light-elevation'), 'scene', 'light.elevation', (el) => { doc().light.elevation = +el.value; });
+  animLiveInput($('light-intensity'), 'scene', 'light.intensity', (el) => { doc().light.intensity = +el.value; });
 
   // Scene · canvas — resize on commit (change), not per keystroke, so "scale
   // contents" computes the ratio against the size you started from. With "Link
@@ -1140,7 +1238,7 @@ function wireControls() {
 
   // Color fields (custom in-page popover — never clips off-screen).
   matColorField = createColorField($('mat-color'), {
-    onInput: (hex) => { beginGesture(); withSelected((l) => (l.material.baseColor = hex)); scheduleRender(); },
+    onInput: (hex) => { beginGesture(); withSelected((l) => (l.material.baseColor = hex)); recordKeyframe('layer', 'material.baseColor'); scheduleRender(); },
     onCommit: commitGesture,
   });
   bgColorField = createColorField($('bg-color'), {
@@ -1160,7 +1258,7 @@ function wireControls() {
   // Layer · position — absolute bbox top-left. Editing moves the PRIMARY layer
   // to the typed coordinate and shifts every selected layer by the same delta
   // (matching drag). Delta is from the exact minX/minY so there's no drift.
-  liveInput($('layer-x'), (el) => {
+  animLiveInput($('layer-x'), 'layer', 'transform.translateX', (el) => {
     const p = primaryLayer();
     if (!p || !p.pathData) return;
     const v = +el.value;
@@ -1168,7 +1266,7 @@ function wireControls() {
     const dx = v - layerTopLeft(p).x;
     withSelected((l) => translateLayer(l, dx, 0));
   });
-  liveInput($('layer-y'), (el) => {
+  animLiveInput($('layer-y'), 'layer', 'transform.translateY', (el) => {
     const p = primaryLayer();
     if (!p || !p.pathData) return;
     const v = +el.value;
@@ -1180,17 +1278,17 @@ function wireControls() {
   // Layer · scale — percentage (100 = original), scaling each selected layer in
   // place about its own center. Guard against non-finite/<=0 so the affine
   // matrix in derive() is never poisoned. Linked = one field drives both axes.
-  liveInput($('layer-scale'), (el) => {
+  animLiveInput($('layer-scale'), 'layer', ['transform.scaleX', 'transform.scaleY'], (el) => {
     const v = +el.value;
     if (!isFinite(v) || v <= 0) return;
     scaleSelection(v / 100, v / 100);
   });
-  liveInput($('layer-scale-x'), (el) => {
+  animLiveInput($('layer-scale-x'), 'layer', 'transform.scaleX', (el) => {
     const v = +el.value;
     if (!isFinite(v) || v <= 0) return;
     scaleSelection(v / 100, null);
   });
-  liveInput($('layer-scale-y'), (el) => {
+  animLiveInput($('layer-scale-y'), 'layer', 'transform.scaleY', (el) => {
     const v = +el.value;
     if (!isFinite(v) || v <= 0) return;
     scaleSelection(null, v / 100);
@@ -1207,7 +1305,7 @@ function wireControls() {
 
   // Layer · material
   liveInput($('layer-name'), (el) => { withPrimary((l) => (l.name = el.value)); });
-  liveInput($('mat-alpha'), (el) => { withSelected((l) => (l.material.fillAlpha = +el.value)); });
+  animLiveInput($('mat-alpha'), 'layer', 'material.fillAlpha', (el) => { withSelected((l) => (l.material.fillAlpha = +el.value)); });
   for (const r of document.querySelectorAll('input[name="fillmode"]')) {
     r.addEventListener('change', () => commit(() => withSelected((l) => {
       l.material.fillMode = r.value;
@@ -1217,9 +1315,9 @@ function wireControls() {
       }
     })));
   }
-  liveInput($('mat-emboss'), (el) => { withSelected((l) => (l.material.embossIntensity = +el.value)); });
+  animLiveInput($('mat-emboss'), 'layer', 'material.embossIntensity', (el) => { withSelected((l) => (l.material.embossIntensity = +el.value)); });
   liveInput($('mat-sheen-on'), (el) => { withSelected((l) => (l.material.sheen.enabled = el.checked)); });
-  liveInput($('mat-sheen'), (el) => { withSelected((l) => (l.material.sheen.strength = +el.value)); });
+  animLiveInput($('mat-sheen'), 'layer', 'material.sheen.strength', (el) => { withSelected((l) => (l.material.sheen.strength = +el.value)); });
   liveInput($('mat-fillrule'), (el) => { withSelected((l) => (l.fillRule = el.value)); });
 
   // Gradient editor. The SIMPLE controls are bulk edits across every selected
@@ -1388,6 +1486,367 @@ function layerTopLeft(layer) {
   return { x: b.minX, y: b.minY };
 }
 
+// ---- timeline dock (raster-only animation; ANIMATION.md §9.4) ----
+// Friendly labels for track rows / the add-track menu.
+const PROP_LABELS = {
+  'light.azimuth': 'Light azimuth',
+  'light.elevation': 'Light elevation',
+  'light.intensity': 'Light intensity',
+  'light.position.x': 'Light X',
+  'light.position.y': 'Light Y',
+  'material.fillAlpha': 'Opacity',
+  'material.baseColor': 'Base color',
+  'material.embossIntensity': 'Emboss',
+  'material.sheen.strength': 'Sheen',
+  'transform.translateX': 'Position X',
+  'transform.translateY': 'Position Y',
+  'transform.scaleX': 'Scale X',
+  'transform.scaleY': 'Scale Y',
+};
+function propLabel(prop) {
+  if (PROP_LABELS[prop]) return PROP_LABELS[prop];
+  const m = /^material\.gradient\.stops\.(\d+)\.(offset|color|alpha)$/.exec(prop);
+  if (m) return `Stop ${+m[1] + 1} ${m[2]}`;
+  return prop;
+}
+function trackLabel(track) {
+  if (track.scope === 'scene') return propLabel(track.prop);
+  const l = doc().layers.find((x) => x.id === track.layerId);
+  return (l ? l.name : '(missing layer)') + ' · ' + propLabel(track.prop);
+}
+
+// Props offerable in the "＋ Track" menu. Only props that ALSO have an inspector
+// control are listed, so every track can get further keyframes by editing that
+// control at a new playhead (rotation is omitted — it has no control yet).
+const SCENE_TARGETS = ['light.azimuth', 'light.elevation', 'light.intensity', 'light.position.x', 'light.position.y'];
+const LAYER_TARGETS = ['material.fillAlpha', 'material.baseColor', 'material.embossIntensity', 'material.sheen.strength', 'transform.translateX', 'transform.translateY', 'transform.scaleX', 'transform.scaleY'];
+function animatableTargets() {
+  const out = SCENE_TARGETS.map((prop) => ({ scope: 'scene', prop }));
+  const p = primaryLayer();
+  if (p) {
+    for (const prop of LAYER_TARGETS) out.push({ scope: 'layer', prop });
+    if (p.material.fillMode === 'gradient' && p.material.gradient) {
+      p.material.gradient.stops.forEach((_, i) => {
+        out.push({ scope: 'layer', prop: `material.gradient.stops.${i}.offset` });
+        out.push({ scope: 'layer', prop: `material.gradient.stops.${i}.color` });
+        out.push({ scope: 'layer', prop: `material.gradient.stops.${i}.alpha` });
+      });
+    }
+  }
+  return out;
+}
+
+function enableTimeline() { commit(() => { doc().timeline.enabled = true; }); }
+function disableTimeline() {
+  // Non-destructive: keeps the keyframes, just stops driving the document.
+  stopPlaybackLoop();
+  commit(() => { doc().timeline.enabled = false; });
+}
+function removeTrack(id) {
+  if (pb().selKey && pb().selKey.trackId === id) pb().selKey = null;
+  commit(() => { const tl = doc().timeline; tl.tracks = tl.tracks.filter((t) => t.id !== id); });
+}
+// Create a track seeded with one keyframe at the playhead from the live value.
+function addTrackFor(scope, prop) {
+  const layerId = scope === 'layer' ? (primaryLayer() && primaryLayer().id) : null;
+  if (scope === 'layer' && !layerId) return toast('Select a layer first.', 'warn');
+  if (findTrack(scope, layerId, prop)) return toast('Already animated — edit it at the playhead.');
+  const type = propType(scope, prop);
+  const raw = getAtPath(scope === 'scene' ? doc() : primaryLayer(), prop);
+  if (raw == null) return;
+  const value = type === 'color' ? String(raw).slice(0, 7) : +raw;
+  commit(() => {
+    const tl = doc().timeline;
+    tl.enabled = true;
+    tl.tracks.push({ id: newId('trk'), scope, layerId, prop, type, keys: [{ t: clampTime(pb().time), value, easing: 'linear' }] });
+  });
+  toast(`Added "${propLabel(prop)}" track.`);
+}
+
+// ---- playback loop (real-clock delta; performance.now is fine in the app) ----
+let playRaf = null;
+let playLastTs = 0;
+function startPlayback() {
+  if (pb().playing) return;
+  if (!isAnimating(doc())) return toast('Add a keyframe first.', 'warn');
+  const tl = doc().timeline;
+  if (clampTime(pb().time) >= tl.duration) pb().time = 0; // at the end → replay from 0
+  pb().playing = true;
+  playLastTs = performance.now();
+  const tick = (ts) => {
+    if (!pb().playing) { playRaf = null; return; }
+    const dur = doc().timeline.duration;
+    const dt = (ts - playLastTs) / 1000;
+    playLastTs = ts;
+    let t = pb().time + dt;
+    if (t >= dur) {
+      if (doc().timeline.loop) t = dur > 0 ? t % dur : 0;
+      else { t = dur; pb().playing = false; }
+    }
+    pb().time = t;
+    scheduleRender();
+    playRaf = pb().playing ? requestAnimationFrame(tick) : null;
+    if (!pb().playing) updateTransport();
+  };
+  playRaf = requestAnimationFrame(tick);
+  updateTransport();
+}
+function stopPlaybackLoop() {
+  pb().playing = false;
+  if (playRaf) { cancelAnimationFrame(playRaf); playRaf = null; }
+}
+function togglePlay() {
+  if (pb().playing) { stopPlaybackLoop(); updateTransport(); }
+  else startPlayback();
+}
+function stopToStart() {
+  stopPlaybackLoop();
+  pb().time = 0;
+  updateTransport();
+  scheduleRender();
+}
+
+// ---- scrubbing (ruler) ----
+function timeFromClientX(clientX) {
+  const r = $('tl-ruler').getBoundingClientRect();
+  const f = r.width > 0 ? (clientX - r.left) / r.width : 0;
+  return clampTime(f * doc().timeline.duration);
+}
+function onRulerDown(e) {
+  stopPlaybackLoop();
+  pb().scrubbing = true;
+  try { $('tl-ruler').setPointerCapture(e.pointerId); } catch (_) {}
+  pb().time = timeFromClientX(e.clientX);
+  updateTransport(); positionPlayhead(); scheduleRender();
+  e.preventDefault();
+}
+function onRulerMove(e) {
+  if (!pb().scrubbing) return;
+  pb().time = timeFromClientX(e.clientX);
+  updateTransport(); positionPlayhead(); scheduleRender();
+}
+function onRulerUp(e) {
+  if (!pb().scrubbing) return;
+  pb().scrubbing = false;
+  try { $('tl-ruler').releasePointerCapture(e.pointerId); } catch (_) {}
+}
+
+// ---- keyframe drag / select / delete (event-delegated on #tl-tracks) ----
+let keyDrag = null;
+function onTracksPointerDown(e) {
+  const dot = e.target.closest('.tl-key');
+  if (!dot) return;
+  const trackId = dot.dataset.trackId;
+  const ki = +dot.dataset.keyIndex;
+  pb().selKey = { trackId, ki };
+  updateEasingControl();
+  markSelectedKey();
+  keyDrag = { trackId, ki, lane: dot.parentElement, moved: false };
+  try { dot.setPointerCapture(e.pointerId); } catch (_) {}
+  e.preventDefault();
+  e.stopPropagation();
+}
+function onTracksPointerMove(e) {
+  if (!keyDrag) return;
+  const track = doc().timeline.tracks.find((x) => x.id === keyDrag.trackId);
+  if (!track || !track.keys[keyDrag.ki]) return;
+  const r = keyDrag.lane.getBoundingClientRect();
+  const f = r.width > 0 ? (e.clientX - r.left) / r.width : 0;
+  const t = clampTime(f * doc().timeline.duration);
+  if (!keyDrag.moved) { beginGesture(); keyDrag.moved = true; } // snapshot only once a real drag starts
+  const key = track.keys[keyDrag.ki];
+  key.t = t;
+  track.keys.sort((a, b) => a.t - b.t);
+  keyDrag.ki = track.keys.indexOf(key); // identity survives the re-sort
+  pb().selKey = { trackId: keyDrag.trackId, ki: keyDrag.ki };
+  pb().time = t; // drag the playhead with the key for feedback
+  lastTracksKey = null; // positions changed → force lane rebuild
+  scheduleRender();
+}
+function onTracksPointerUp() {
+  if (!keyDrag) return;
+  const moved = keyDrag.moved;
+  keyDrag = null;
+  if (moved) commitGesture();
+}
+function onTracksDblClick(e) {
+  const dot = e.target.closest('.tl-key');
+  if (!dot) return;
+  const trackId = dot.dataset.trackId;
+  const ki = +dot.dataset.keyIndex;
+  pb().selKey = null;
+  commit(() => {
+    const tl = doc().timeline;
+    const track = tl.tracks.find((x) => x.id === trackId);
+    if (!track) return;
+    track.keys.splice(ki, 1);
+    if (!track.keys.length) tl.tracks = tl.tracks.filter((x) => x.id !== trackId); // last key → drop the track
+  });
+}
+
+// ---- render the timeline (derived view; ANIMATION.md §9.4) ----
+function renderTimeline() {
+  const sec = $('timeline');
+  if (!sec) return;
+  const tl = doc().timeline;
+  const enabled = !!(tl && tl.enabled);
+  sec.classList.toggle('on', enabled);
+  $('tl-enable').hidden = enabled;
+  $('tl-transport').hidden = !enabled;
+  $('tl-body').hidden = !enabled;
+  if (!enabled) return;
+  updateTransport();
+  renderTracks();
+  positionPlayhead();
+  updateEasingControl();
+  markSelectedKey();
+}
+function updateTransport() {
+  const tl = doc().timeline;
+  const p = pb();
+  setVal($('tl-duration'), tl.duration);
+  setVal($('tl-fps'), tl.fps);
+  setChecked($('tl-loop'), tl.loop);
+  $('tl-rec').setAttribute('aria-pressed', String(p.autokey));
+  $('tl-rec').classList.toggle('armed', p.autokey);
+  $('tl-play').textContent = p.playing ? '⏸' : '▶';
+  $('tl-time').textContent = clampTime(p.time).toFixed(2) + ' / ' + (+tl.duration).toFixed(2) + 's';
+}
+let lastTracksKey = null;
+function renderTracks() {
+  const tl = doc().timeline;
+  const cont = $('tl-tracks');
+  // Rebuild only when track structure / key positions change (not every scrub
+  // frame), so a focused easing select / drag isn't destroyed mid-gesture.
+  const key = tl.duration + '#' + tl.tracks.map((t) =>
+    t.id + ':' + (t.scope === 'layer' ? t.layerId : '') + ':' + t.keys.map((k) => k.t.toFixed(3) + k.easing).join(',')
+  ).join('|');
+  if (key === lastTracksKey) return;
+  lastTracksKey = key;
+  cont.innerHTML = '';
+  if (!tl.tracks.length) {
+    const empty = document.createElement('div');
+    empty.className = 'tl-empty';
+    empty.textContent = 'No keyframes yet — arm ● REC and change a control, or use ＋ Track.';
+    cont.appendChild(empty);
+    return;
+  }
+  for (const track of tl.tracks) {
+    const row = document.createElement('div');
+    row.className = 'tl-track';
+    const label = document.createElement('div');
+    label.className = 'tl-label';
+    label.textContent = trackLabel(track);
+    label.title = label.textContent;
+    const lane = document.createElement('div');
+    lane.className = 'tl-lane';
+    lane.dataset.trackId = track.id;
+    track.keys.forEach((k, ki) => {
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'tl-key';
+      dot.style.left = (k.t / (tl.duration || 1)) * 100 + '%';
+      dot.title = `t=${k.t.toFixed(2)}s · ${k.easing} (drag to move · double-click to delete)`;
+      dot.dataset.trackId = track.id;
+      dot.dataset.keyIndex = String(ki);
+      lane.appendChild(dot);
+    });
+    const del = miniBtn('✕', 'Remove track', (e) => { e.stopPropagation(); removeTrack(track.id); });
+    row.append(label, lane, del);
+    cont.appendChild(row);
+  }
+}
+function positionPlayhead() {
+  const tl = doc().timeline;
+  const ph = $('tl-playhead');
+  if (ph) ph.style.left = (clampTime(pb().time) / (tl.duration || 1)) * 100 + '%';
+}
+function markSelectedKey() {
+  const cont = $('tl-tracks');
+  for (const d of cont.querySelectorAll('.tl-key.sel')) d.classList.remove('sel');
+  const sel = pb().selKey;
+  if (!sel) return;
+  const dot = cont.querySelector(`.tl-key[data-track-id="${CSS.escape(sel.trackId)}"][data-key-index="${sel.ki}"]`);
+  if (dot) dot.classList.add('sel');
+}
+function updateEasingControl() {
+  const wrap = $('tl-ease-wrap');
+  const sel = pb().selKey;
+  const track = sel && doc().timeline.tracks.find((x) => x.id === sel.trackId);
+  const k = track && track.keys[sel.ki];
+  if (!k) { wrap.hidden = true; if (sel) pb().selKey = null; return; }
+  wrap.hidden = false;
+  setVal($('tl-ease'), k.easing);
+}
+
+function wireTimeline() {
+  $('tl-enable').addEventListener('click', enableTimeline);
+  $('tl-disable').addEventListener('click', disableTimeline);
+  $('tl-play').addEventListener('click', togglePlay);
+  $('tl-stop').addEventListener('click', stopToStart);
+  $('tl-rec').addEventListener('click', () => { pb().autokey = !pb().autokey; updateTransport(); });
+  $('tl-duration').addEventListener('change', () => {
+    const v = +$('tl-duration').value;
+    if (!isFinite(v)) return;
+    commit(() => {
+      const tl = doc().timeline;
+      tl.duration = Math.min(600, Math.max(0.1, v));
+      for (const tr of tl.tracks) for (const k of tr.keys) k.t = Math.min(tl.duration, k.t);
+    });
+    pb().time = clampTime(pb().time);
+  });
+  $('tl-fps').addEventListener('change', () => {
+    const v = +$('tl-fps').value;
+    if (isFinite(v)) commit(() => { doc().timeline.fps = Math.round(Math.min(120, Math.max(1, v))); });
+  });
+  $('tl-loop').addEventListener('change', () => commit(() => { doc().timeline.loop = $('tl-loop').checked; }));
+
+  // ＋ Track dropdown (rebuilt on open from the current selection).
+  $('tl-add').addEventListener('click', (e) => {
+    e.stopPropagation();
+    buildAddTrackMenu();
+    const m = $('tl-add-menu');
+    m.hidden = !m.hidden;
+  });
+  $('tl-add-menu').addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => { $('tl-add-menu').hidden = true; });
+
+  const ruler = $('tl-ruler');
+  ruler.addEventListener('pointerdown', onRulerDown);
+  ruler.addEventListener('pointermove', onRulerMove);
+  ruler.addEventListener('pointerup', onRulerUp);
+  ruler.addEventListener('pointercancel', onRulerUp);
+
+  const tracks = $('tl-tracks');
+  tracks.addEventListener('pointerdown', onTracksPointerDown);
+  tracks.addEventListener('pointermove', onTracksPointerMove);
+  tracks.addEventListener('pointerup', onTracksPointerUp);
+  tracks.addEventListener('pointercancel', onTracksPointerUp);
+  tracks.addEventListener('dblclick', onTracksDblClick);
+
+  $('tl-ease').addEventListener('change', () => {
+    const sel = pb().selKey;
+    if (!sel) return;
+    commit(() => {
+      const track = doc().timeline.tracks.find((x) => x.id === sel.trackId);
+      if (track && track.keys[sel.ki]) track.keys[sel.ki].easing = $('tl-ease').value;
+    });
+  });
+}
+function buildAddTrackMenu() {
+  const menu = $('tl-add-menu');
+  menu.innerHTML = '';
+  const targets = animatableTargets();
+  const layerId = primaryLayer() && primaryLayer().id;
+  for (const tgt of targets) {
+    const b = document.createElement('button');
+    const exists = findTrack(tgt.scope, tgt.scope === 'layer' ? layerId : null, tgt.prop);
+    b.textContent = (tgt.scope === 'scene' ? 'Scene · ' : 'Layer · ') + propLabel(tgt.prop) + (exists ? '  ✓' : '');
+    b.addEventListener('click', () => { menu.hidden = true; addTrackFor(tgt.scope, tgt.prop); });
+    menu.appendChild(b);
+  }
+}
+
 // ---- top bar: file + export ----
 function wireToolbar() {
   $('btn-undo').addEventListener('click', undo);
@@ -1545,16 +2004,23 @@ function importLayers(res, filename, viaOpen) {
 async function doExport(action) {
   $('export-menu').hidden = true;
   const d = doc();
-  const derived = derive(d);
+  // Single-file exports are a still of the CURRENT playhead frame (ANIMATION.md
+  // §4): PNG/SVG keep full fidelity, VD strips what its format can't express
+  // (no raster filters exist yet in Phase 1, so VD only loses the motion). The
+  // frame index suffixes the filename so a sequence doesn't overwrite itself.
+  const animating = isAnimating(d);
+  const exportDoc = animating ? documentAt(d, clampTime(pb().time)) : d;
+  const derived = derive(exportDoc);
+  const frameTag = animating ? '-f' + String(Math.round(clampTime(pb().time) * d.timeline.fps)).padStart(4, '0') : '';
   try {
     if (action === 'vd') {
       const xml = exportVD(derived, d.canvas);
-      download(new Blob([xml], { type: 'text/xml' }), exportName('vd', 'xml'));
-      toast('Exported VectorDrawable XML.');
+      download(new Blob([xml], { type: 'text/xml' }), exportName('vd' + frameTag, 'xml'));
+      toast(animating ? 'Exported VectorDrawable (current frame — animation isn’t included).' : 'Exported VectorDrawable XML.', animating ? 'warn' : '');
     } else if (action === 'svg') {
       const svg = standaloneSvg(derived, d.canvas.viewportWidth, d.canvas.viewportHeight, { background: true });
-      download(new Blob([svg], { type: 'image/svg+xml' }), exportName('svg', 'svg'));
-      toast('Exported SVG.');
+      download(new Blob([svg], { type: 'image/svg+xml' }), exportName('svg' + frameTag, 'svg'));
+      toast(animating ? 'Exported SVG (current frame).' : 'Exported SVG.');
     } else if (action === 'project') {
       downloadProject();
       toast('Downloaded project file.');
@@ -1563,8 +2029,8 @@ async function doExport(action) {
       const withBg = action === 'png-bg';
       const background = withBg ? { transparent: false, color: d.canvas.exportBackground.color } : { transparent: true };
       const blob = await renderPng(derived, size, background);
-      download(blob, exportName(withBg ? 'iwb' : 'iwt', 'png'));
-      toast(`Exported PNG (${size}px).`);
+      download(blob, exportName((withBg ? 'iwb' : 'iwt') + frameTag, 'png'));
+      toast(`Exported PNG (${size}px${animating ? ', current frame' : ''}).`);
     } else if (action === 'share') {
       const url = location.origin + location.pathname + '#' + encodeShareFragment(d, appState.ui.projectName);
       if (url.length > 30000) {
@@ -1590,6 +2056,9 @@ function loadDocument(rawDoc, name) {
   appState.ui.selectAnchorId = null;
   appState.ui.projectName = name || 'icon';
   appState.ui.view = { scale: 1, panX: 0, panY: 0 }; // reset zoom/pan on load
+  stopPlaybackLoop();
+  appState.ui.playback = { time: 0, playing: false, scrubbing: false, autokey: false, selKey: null };
+  lastTracksKey = null;
   $('doc-name').value = appState.ui.projectName;
   undoStack.length = 0;
   redoStack.length = 0;
@@ -1699,6 +2168,11 @@ function reloadFromWatch(res) {
   appState.document = res.document; // already normalized by parseProject
   appState.ui.projectName = res.name;
   $('doc-name').value = res.name;
+  // The track set may have changed under us — drop any stale keyframe selection
+  // and re-clamp the playhead, but keep the current time/zoom/pan.
+  pb().selKey = null;
+  pb().time = clampTime(pb().time);
+  lastTracksKey = null;
   reconcileSelection();
   undoStack.length = 0;
   redoStack.length = 0;
@@ -1999,6 +2473,7 @@ async function init() {
   $('app-version').textContent = 'v' + APP_VERSION;
   wireControls();
   wireToolbar();
+  wireTimeline();
   setupToolbarOverflow();
   updateHistoryButtons();
   registerServiceWorker();

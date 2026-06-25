@@ -423,6 +423,45 @@
     </aside>
   </main>
 
+  <!-- BOTTOM: animation timeline (raster-only — PNG / video export, never
+       VectorDrawable; ANIMATION.md §9.4). Collapsed to a single "＋ Animate"
+       affordance until enabled. -->
+  <section class="timeline" id="timeline">
+    <div class="tl-head">
+      <button id="tl-enable" class="tl-ctl"
+              title="Add a timeline to animate properties (affects PNG / video export only, not VectorDrawable)">＋ Animate</button>
+      <div class="tl-transport" id="tl-transport" hidden>
+        <button id="tl-play" class="tl-ctl" title="Play / pause">▶</button>
+        <button id="tl-stop" class="tl-ctl" title="Stop (return to start)">⏮</button>
+        <button id="tl-rec" class="tl-ctl rec" aria-pressed="false"
+                title="Auto-key: while on, editing a control drops a keyframe at the playhead">● REC</button>
+        <span id="tl-time" class="tl-time">0.00 / 3.00s</span>
+        <label class="tl-field">Dur <input id="tl-duration" type="number" min="0.1" step="0.1" class="num" /> s</label>
+        <label class="tl-field">FPS <input id="tl-fps" type="number" min="1" max="120" step="1" class="num" /></label>
+        <label class="tl-field">Loop <input id="tl-loop" type="checkbox" /></label>
+        <span class="tl-ease-wrap" id="tl-ease-wrap" hidden>Ease
+          <select id="tl-ease" title="Easing leaving the selected keyframe">
+            <option value="linear">Linear</option>
+            <option value="easeIn">Ease in</option>
+            <option value="easeOut">Ease out</option>
+            <option value="easeInOut">Ease in-out</option>
+            <option value="hold">Hold</option>
+          </select>
+        </span>
+        <span class="tl-spacer"></span>
+        <div class="dropdown">
+          <button id="tl-add" class="tl-ctl" aria-haspopup="true" title="Add a keyframe track">＋ Track ▾</button>
+          <div class="menu" id="tl-add-menu" hidden></div>
+        </div>
+        <button id="tl-disable" class="tl-ctl" title="Disable animation (keeps keyframes)">✕</button>
+      </div>
+    </div>
+    <div class="tl-body" id="tl-body" hidden>
+      <div class="tl-ruler" id="tl-ruler"><div class="tl-playhead" id="tl-playhead"></div></div>
+      <div class="tl-tracks" id="tl-tracks"></div>
+    </div>
+  </section>
+
   <div id="toast" class="toast" hidden></div>
 
   <script type="module" src="ui.js"></script>

@@ -7,6 +7,24 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+### Added
+
+- **Animate your icon (timeline).** A new bottom **timeline** lets you animate
+  properties over time and export the result as image frames — it affects **PNG
+  and SVG export only**, never VectorDrawable (which stays a static icon). Click
+  **＋ Animate** to add a timeline, then turn on **● REC** and change any
+  animatable control — the light (position / azimuth / elevation / intensity), a
+  layer's **opacity, base color, emboss, sheen, position, scale**, or individual
+  **gradient stops** (offset / color / alpha) — to drop a keyframe at the
+  playhead. Or use **＋ Track** to add one explicitly. Scrub the ruler or press
+  **play** to preview; drag keyframes to retime them, double-click to delete, and
+  pick an **easing** (linear / ease in / out / in-out / hold) per keyframe.
+  Exporting a PNG/SVG while a timeline is on saves the **current frame** (with the
+  frame number in the filename), so you can step the playhead and export a
+  sequence. The timeline is saved in your project file. (Video export comes next.)
+
 ## [1.8.0] — 2026-06-22
 
 ### Added

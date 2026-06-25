@@ -28,6 +28,7 @@ const PRECACHE = [
   // ES modules
   'ui.js',
   'model.js',
+  'animate.js',
   'derive.js',
   'svg.js',
   'export-vd.js',

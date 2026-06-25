@@ -468,6 +468,109 @@ body {
 .grad-advanced[open] > summary::before { content: "▾ "; }
 .grad-advanced > summary:hover { color: var(--text); }
 
+/* ---- timeline dock (raster-only animation; ANIMATION.md §9.4) ---- */
+.timeline {
+  flex: 0 0 auto;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  --tl-label-w: 150px;
+  --tl-del-w: 26px;
+}
+.tl-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.75rem; }
+.tl-transport { display: flex; align-items: center; gap: 0.5rem; flex: 1 1 auto; flex-wrap: wrap; }
+.tl-transport[hidden] { display: none; }
+.tl-ctl {
+  appearance: none;
+  border: 1px solid var(--line-2);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  line-height: 1;
+  padding: 0.25rem 0.55rem;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.tl-ctl:hover { border-color: var(--accent); }
+.tl-ctl:active { transform: translateY(1px); }
+.tl-ctl.rec[aria-pressed="true"], .tl-ctl.rec.armed { border-color: #c0463a; color: #ff6b5e; }
+.tl-time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 96px; }
+.tl-field { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); white-space: nowrap; }
+.tl-field .num {
+  flex: 0 0 56px; min-width: 0;
+  background: var(--panel-2); border: 1px solid var(--line-2); color: var(--text);
+  border-radius: 7px; padding: 0.25rem 0.4rem; font: inherit;
+}
+.tl-ease-wrap { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.tl-ease-wrap[hidden] { display: none; }
+.tl-ease-wrap select {
+  background: var(--panel-2); border: 1px solid var(--line-2); color: var(--text);
+  border-radius: 7px; padding: 0.25rem 0.4rem; font: inherit;
+}
+.tl-spacer { flex: 1 1 0; min-width: 0; }
+/* The add-track menu opens UPWARD — the dock sits at the bottom of the window. */
+#tl-add-menu { top: auto; bottom: calc(100% + 6px); max-height: 50vh; overflow-y: auto; }
+
+.tl-body { padding: 0 0.75rem 0.6rem; }
+.tl-body[hidden] { display: none; }
+.tl-ruler {
+  position: relative;
+  height: 18px;
+  margin: 0 var(--tl-del-w) 4px var(--tl-label-w);
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  cursor: pointer;
+  touch-action: none;
+}
+.tl-playhead {
+  position: absolute;
+  top: -2px; bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.tl-tracks { display: flex; flex-direction: column; gap: 4px; max-height: 30vh; overflow-y: auto; }
+.tl-empty { color: var(--muted); font-size: 11px; padding: 6px 0 6px var(--tl-label-w); }
+.tl-track {
+  display: grid;
+  grid-template-columns: var(--tl-label-w) 1fr var(--tl-del-w);
+  align-items: center;
+  gap: 4px;
+}
+.tl-label { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.tl-lane {
+  position: relative;
+  height: 22px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  touch-action: none;
+}
+.tl-key {
+  position: absolute;
+  top: 50%;
+  width: 11px; height: 11px;
+  margin: -6px 0 0 -6px;
+  background: var(--accent);
+  border: 1px solid #0b0d12;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  cursor: ew-resize;
+  padding: 0;
+}
+.tl-key:hover { background: #8fc0ff; }
+.tl-key.sel { background: #fff; box-shadow: 0 0 0 2px var(--accent); z-index: 1; }
+.tl-track .mini {
+  background: none; border: none; cursor: pointer; color: var(--muted);
+  font-size: 12px; padding: 2px 3px; border-radius: 5px;
+}
+.tl-track .mini:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+
 /* ---- modal dialog (in-page confirm; replaces native confirm/alert) ---- */
 .dlg-overlay {
   position: fixed;

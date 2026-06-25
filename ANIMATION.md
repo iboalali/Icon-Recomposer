@@ -1,6 +1,7 @@
 # ANIMATION.md — Raster-only material & motion design
 
-> **Status: design / discussion. Nothing here is implemented yet.**
+> **Status: Phase 1 implemented (§9) — timeline + property animation + preview
+> playback + PNG/SVG export at the playhead. Phases 2–4 (§7) are still design.**
 > Companion to `PLAN.md` (the authoritative spec for the *static, VD-faithful*
 > app). This document covers a deliberately **raster-only** extension: richer
 > materials and timeline animation that target **PNG / image-sequence / video
