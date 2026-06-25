@@ -71,40 +71,54 @@ code. The work is the timeline model, the interpolator, the playback UI, and
 - Path morphing (Phase 4 — the hard one).
 
 **Explicit non-goals:**
-- **No vector export of any animated or raster-only feature.** VD/SVG-vector
-  export stays static and VD-expressible. See §4 for the degradation rule.
-- **No new dependencies, no build step.** (See §8 — this is why `ffmpeg.wasm`
-  is rejected.) Stays vanilla ES modules, zero `npm`, consistent with the
-  hand-rolled `path.js` ethos.
+- **No animation in any single-file export.** VD, SVG, and PNG all export a
+  single **current-playhead frame** (still). Motion only comes out via the
+  Phase 3 sequence/video exporters. See §4 for the per-format degradation rule.
+- **VD strips raster filters; SVG keeps them.** Raster material effects (§6) are
+  SVG `<filter>`s. Standalone SVG can carry them (browsers render filters);
+  VectorDrawable's format cannot, so VD export drops them. This is the one
+  asymmetry — SVG is *not* as constrained as VD here. See §4.
+- **No new bundled dependencies, no build step.** (See §8 — this is why
+  `ffmpeg.wasm` is rejected from the base app; an *optional on-demand* download
+  is noted as a future option.) Stays vanilla ES modules, zero `npm`, consistent
+  with the hand-rolled `path.js` ethos.
 - **No second drawing engine.** Raster effects must be expressible as SVG
   filters so the existing `SVG → Image → canvas` path renders them for free
   (see §6). We do not build a canvas compositing/particle engine.
 
 ---
 
-## 4. The VectorDrawable-parity boundary (the real product decision)
+## 4. Per-format export fidelity (DECIDED)
 
 The app's identity is *one derived model, multiple pixel-identical serializers,
 all VD-expressible*. These features deliberately break "VD-expressible" for the
 raster path. The risk is silent confusion: "why did my export lose the glow /
-the motion?"
+the motion?" — so each single-file export degrades **explicitly**, at the
+**current playhead frame**, never silently.
 
-**Recommended rule: taint + visible badge (not a global mode switch).**
+**Decision (A): three single-file fidelity tiers, each a single current-frame
+still — plus separate motion exporters (Phase 3). No global "raster mode".**
 
-- A layer that uses a raster-only material property, **or** any document that
-  has a non-empty timeline, is *tainted*.
-- Vector exports (VD, vector SVG) stay available but **warn and degrade**:
-  they export the **`t = 0` base frame** with raster-only effects stripped,
-  via a `confirmDialog()` ("This document has motion / raster-only effects that
-  VectorDrawable can't represent. Export the base frame without them?").
-- The UI shows a small **"raster only — won't appear in VectorDrawable"** badge
-  on tainted layers and a timeline indicator.
-- PNG / image-sequence / video exports honor everything.
+| Export | Frame | Raster filters (§6) | Animation | On export |
+| --- | --- | --- | --- | --- |
+| **VectorDrawable** | current playhead | **stripped** — format can't express filters | none (still) | warn via `confirmDialog()` if doc has filters and/or a timeline; emit the VD-safe subset of the current frame |
+| **SVG** | current playhead | **kept** — emitted as `<filter>`; browsers render them | none (still) | warn only if a timeline exists (motion not included); full visual fidelity otherwise |
+| **PNG** | current playhead | **kept** — rasterized through `Image → canvas` | none (still) | no warning needed; full fidelity |
+| **Image sequence / video** (Phase 3) | every frame | kept | **yes** | the only motion outputs |
 
-This keeps the WYSIWYG-to-VD promise intact for everything that *can*
-round-trip, and makes the boundary honest and visible rather than silent.
-**Open decision A** (§10): this taint+badge approach vs. a hard per-document
-"raster mode" switch.
+Why this shape:
+- **VD is the only lossy still** — its format genuinely can't express SVG
+  filters, so stripping them at the current frame is the honest floor. The warn
+  dialog states what's dropped (filters and/or motion) before writing.
+- **SVG is full-fidelity for a still** — it carries the filters, so "Export SVG"
+  of the current frame looks identical to the preview at that playhead. It just
+  can't be animated (SMIL is not pursued — see §7 / future).
+- **PNG** is the everyday still; motion lives in the sequence/video exporters.
+
+UI: a small **"raster only — won't appear in VectorDrawable"** badge on layers
+that use filters, and a timeline indicator, so the VD limitation is visible
+*before* the user reaches export. No document-wide mode switch — animation and
+filters are *features*, not a separate document type.
 
 ---
 
@@ -184,7 +198,8 @@ interpolation time.** i.e. the canonical `target` is really
 `{ layerId, prop: 'material.fillAlpha' }`; the string form above is the
 human-readable rendering. Document-level targets (`light.*`) have no layerId.
 This avoids the classic "animation retargets to the wrong layer after a
-delete" bug. **Open decision B** (§10).
+delete" bug. **DECIDED (B): store `layerId` + prop, resolve index at sample
+time.**
 
 ### 5.4 Interpolation by type
 
@@ -200,7 +215,7 @@ lines, no dependency.
 
 ---
 
-## 6. Raster materials = SVG filters (Phase 2 direction, documented now)
+## 6. Raster materials = SVG filters (Phase 2 — DECIDED: filters only for now)
 
 "Professional material properties" splits into two very different worlds:
 
@@ -217,11 +232,14 @@ elements inside the derived SVG, the existing `SVG → Image → canvas` path
 preview/PNG/frame parity holds automatically, no second renderer, no separate
 canvas code path. World 2 means a fourth renderer and the loss of
 preview==export parity. World 1 buys ~90% of what users want from "material
-properties" at a fraction of the cost. **Open decision C** (§10).
+properties" at a fraction of the cost. **DECIDED (C): world 1 (SVG filters)
+only for now. World 2 (canvas compositing engine) is parked here as a possible
+future direction — revisit only if a wanted effect is provably impossible as an
+SVG filter.**
 
-These filters are exactly the things VD cannot express → they're precisely the
-tainting features from §4. The boundary is clean: *if it's an SVG filter, it's
-raster-only.*
+These filters are exactly the things VD cannot express → they're the SVG-but-
+not-VD tier from §4 (SVG export keeps them; VD strips them). The boundary is
+clean: *if it's an SVG filter, it survives SVG/PNG export but not VD.*
 
 ---
 
@@ -230,8 +248,8 @@ raster-only.*
 1. **Phase 1 — Timeline + property animation + preview playback + PNG-at-scrubber.**
    No new effects, no video encoding. Animate existing numeric/color/transform/
    alpha props. Ships entirely on existing infra. **Detailed in §9.**
-2. **Phase 2 — Raster-only material effects** via SVG filters (§6), behind the
-   taint+badge mechanism (§4) with vector-export warnings.
+2. **Phase 2 — Raster-only material effects** via SVG filters (§6), with the
+   per-format degradation + badge mechanism (§4) and VD-export warnings.
 3. **Phase 3 — Motion export.** In order of effort/quality:
    - **PNG sequence** (zero new infra — loops `renderPng` over frames; user
      encodes externally). The honest MVP for motion export.
@@ -245,18 +263,30 @@ raster-only.*
 
 ---
 
-## 8. Export tech analysis — and why `ffmpeg.wasm` is rejected
+## 8. Export tech analysis — DECIDED (E): easy route now, `ffmpeg.wasm` parked
 
-`ffmpeg.wasm` fights this project's identity on every axis:
+**DECIDED (E): ship motion export as a PNG sequence first (the easy route).
+Graduate to WebCodecs later. `ffmpeg.wasm` is parked as a possible *opt-in,
+on-demand* future feature — never bundled.**
+
+`ffmpeg.wasm` as a **bundled, always-loaded** dependency fights this project's
+identity on every axis:
 - **~25–30 MB** payload — antithetical to a zero-dep, instant-load PWA that
   hand-rolls `path.js` specifically to avoid dependencies.
 - **Hard dependency** — there is no "vendored, dependency-free" version of it.
-- **Cross-origin isolation required** — needs COOP/COEP headers +
-  `SharedArrayBuffer` for threading, which **GitHub Pages cannot set** without a
-  service-worker header-injection hack (gnarly, and our `sw.js` is deliberately
-  minimal).
+- **Cross-origin isolation** — the *threaded* build needs COOP/COEP headers +
+  `SharedArrayBuffer`, which **GitHub Pages cannot set** without a service-worker
+  header-injection hack (gnarly; our `sw.js` is deliberately minimal). The
+  **single-threaded** build avoids that requirement but is slower.
 
-It is the single heaviest, least-on-brand choice available. **Do not use it.**
+So it is rejected *from the base app*. **Future option (noted, not now):** an
+**optional on-demand download** — the pattern some local-only tools use, where
+the app stays tiny and only fetches `ffmpeg.wasm` (single-threaded build, no
+COOP/COEP needed) the first time a user explicitly opts into a richer
+video/codec export. This sidesteps the payload/identity objection (it's never in
+the base bundle) while unlocking formats WebCodecs can't reach. Revisit after
+the WebCodecs path exists; keep it strictly opt-in and clearly labelled as an
+external download.
 
 Recommended path instead (also §7 Phase 3):
 
@@ -348,16 +378,34 @@ function render() {
   resave constantly). They mutate `appState.ui` and call `scheduleRender()`
   directly. This mirrors the existing ephemeral-view pattern precisely.
 
-**Inspector value gotcha:** `updateInspector()` populates controlled inputs
-from `primaryLayer()`/`doc()`. While scrubbing, the *displayed* values should
-reflect the **interpolated** doc (so the user sees the animated state), but
-**edits must write back to the base document's keyframes / base values**, never
-to the interpolated clone (which is thrown away each frame). Decide the editing
-convention now: editing a property *that has a track* should either (a) be
-disabled with an "animated" affordance, or (b) set/insert a keyframe at the
-current playhead. **Open decision D** (§10). Simplest Phase-1: show interpolated
-values read-only when a track exists; all keyframe editing happens in the
-timeline UI.
+**Inspector editing model — DECIDED (D): editing a control drops a keyframe.**
+`updateInspector()` populates controlled inputs from `primaryLayer()`/`doc()`.
+While scrubbing, the *displayed* values reflect the **interpolated** doc (so the
+user sees the animated state). On edit:
+
+- **If the edited property already has a track** → the edit **sets/inserts a
+  keyframe at the current playhead time** (replace the key if one exists at that
+  `t`, else insert and re-sort). This is the pro-tool "auto-key" feel.
+- **If the property has no track yet** → behavior depends on an **arm/record
+  state** (sub-decision D1 below), to avoid creating tracks by accident:
+  - *Recommended:* a global **auto-key toggle** in the transport. Off (default):
+    editing a track-less property just changes its **base value** statically
+    (today's behavior). On: editing a track-less property **creates a track**
+    and drops the first key at the playhead. Plus an explicit per-control "◆"
+    affordance that always creates a track + key regardless of the toggle.
+  - This keeps "I just want to tweak the static look" and "I'm animating this"
+    as distinct, deliberate gestures.
+
+**Write-back rule (non-negotiable):** edits ALWAYS mutate the **base document**
+(its keyframes / base values) via `commit`/`commitGesture` — **never** the
+interpolated clone, which is discarded each frame. The clone is read-only output
+of `documentAt`. Inserting/moving/deleting a keyframe is itself an undoable
+`commit`.
+
+**Open sub-decision D1 (§10):** auto-key toggle (recommended) vs. always-on
+auto-key (every edit on any property keyframes — simpler, but easy to litter
+tracks) vs. explicit-◆-only (no auto-key; tracks only via the per-control
+affordance — safest, least magical).
 
 ### 9.4 Timeline UI
 
@@ -424,19 +472,30 @@ Per `CLAUDE.md` (serve + `google-chrome --headless=new --dump-dom`):
 
 ---
 
-## 10. Open decisions (carry into build)
+## 10. Decisions log
 
-- **A. VD-parity boundary** — taint+badge+warn-on-vector-export *(recommended,
-  §4)* vs. a hard per-document "raster mode" switch.
-- **B. Track targeting** — store `layerId` + prop and resolve index at sample
-  time *(recommended, §5.3)* vs. raw index paths *(fragile)*.
-- **C. Material effects scope** — SVG-filter-only *(recommended, §6)* vs. a
-  canvas compositing engine. (Phase 2 question; record the lean now.)
-- **D. Editing an animated property** — read-only-in-inspector + edit only via
-  timeline *(simplest for P1)* vs. "edit sets a keyframe at the playhead"
-  *(nicer, more work)*.
-- **E. Motion export format priority** (Phase 3) — confirmed order: PNG-seq →
-  WebCodecs → MediaRecorder/GIF. `ffmpeg.wasm` rejected (§8).
+**Resolved:**
+- **A. Per-format export fidelity** — ✅ *three single-file tiers, each a single
+  current-playhead still: VD strips filters (warn), SVG keeps filters, PNG keeps
+  filters; motion only via Phase 3 sequence/video. No global "raster mode".* (§4)
+- **B. Track targeting** — ✅ *store `layerId` + prop, resolve index at sample
+  time.* (§5.3)
+- **C. Material effects scope** — ✅ *SVG filters only for now; canvas
+  compositing engine parked as a future direction.* (§6)
+- **D. Editing an animated property** — ✅ *editing a control drops a keyframe at
+  the playhead; edits always write back to the base document.* (§9.3)
+- **E. Motion export priority** — ✅ *PNG-sequence first (easy route), then
+  WebCodecs. `ffmpeg.wasm` not bundled; parked as an optional on-demand download
+  for the future.* (§8)
+
+**Still open (sub-decisions, resolve during build):**
+- **D1. Track-less property edits** — auto-key toggle *(recommended)* vs.
+  always-on auto-key vs. explicit-◆-only. (§9.3)
+- **F. Easing set for Phase 1** — confirm `linear / easeIn / easeOut /
+  easeInOut / hold`; `cubicBezier` deferred. (§5.2)
+- **G. Gradient-stop animation in Phase 1** — include
+  `material.gradient.stops[j].offset/color` in the P1 allow-list, or defer to
+  Phase 1.5? (§5.3)
 
 ---
 
