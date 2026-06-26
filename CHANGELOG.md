@@ -18,7 +18,8 @@ into saved project files.
   animatable control — the light (position / azimuth / elevation / intensity), a
   layer's **opacity, base color, emboss, sheen, position, scale**, or individual
   **gradient stops** (offset / color / alpha) — to drop a keyframe at the
-  playhead. Or use **＋ Track** to add one explicitly. Scrub the ruler or press
+  playhead. Or add tracks explicitly with **◆ Key layer** (layer properties) and
+  **＋ Light** (the scene light). Scrub the ruler or press
   **play** to preview; drag keyframes to retime them, double-click to delete, and
   pick an **easing** (linear / ease in / out / in-out / hold) per keyframe.
   Exporting a PNG/SVG while a timeline is on saves the **current frame** (with the

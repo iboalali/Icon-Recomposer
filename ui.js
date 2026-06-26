@@ -1544,26 +1544,12 @@ function trackLabel(track) {
   return (l ? l.name : '(missing layer)') + ' · ' + propLabel(track.prop);
 }
 
-// Props offerable in the "＋ Track" menu. Only props that ALSO have an inspector
-// control are listed, so every track can get further keyframes by editing that
-// control at a new playhead (rotation is omitted — it has no control yet).
+// Props offerable in the "＋ Light" menu (scene light). Only props that ALSO have
+// an inspector control are listed, so every track can get further keyframes by
+// editing that control at a new playhead.
+// The "＋ Light" menu animates the scene light only — layer properties are keyed
+// via "◆ Key layer" (which handles multi-property, multi-layer selection).
 const SCENE_TARGETS = ['light.azimuth', 'light.elevation', 'light.intensity', 'light.position.x', 'light.position.y'];
-const LAYER_TARGETS = ['material.fillAlpha', 'material.baseColor', 'material.embossIntensity', 'material.sheen.strength', 'transform.translateX', 'transform.translateY', 'transform.scaleX', 'transform.scaleY'];
-function animatableTargets() {
-  const out = SCENE_TARGETS.map((prop) => ({ scope: 'scene', prop }));
-  const p = primaryLayer();
-  if (p) {
-    for (const prop of LAYER_TARGETS) out.push({ scope: 'layer', prop });
-    if (p.material.fillMode === 'gradient' && p.material.gradient) {
-      p.material.gradient.stops.forEach((_, i) => {
-        out.push({ scope: 'layer', prop: `material.gradient.stops.${i}.offset` });
-        out.push({ scope: 'layer', prop: `material.gradient.stops.${i}.color` });
-        out.push({ scope: 'layer', prop: `material.gradient.stops.${i}.alpha` });
-      });
-    }
-  }
-  return out;
-}
 
 function enableTimeline() { commit(() => { doc().timeline.enabled = true; }); }
 function disableTimeline() {
@@ -1832,7 +1818,7 @@ function renderTracks() {
   if (!tl.tracks.length) {
     const empty = document.createElement('div');
     empty.className = 'tl-empty';
-    empty.textContent = 'No keyframes yet — arm ● REC and change a control, or use ＋ Track.';
+    empty.textContent = 'No keyframes yet — arm ● REC and change a control, use ◆ Key layer, or ＋ Light.';
     cont.appendChild(empty);
     return;
   }
@@ -1913,7 +1899,7 @@ function wireTimeline() {
   });
   $('tl-loop').addEventListener('change', () => commit(() => { doc().timeline.loop = $('tl-loop').checked; }));
 
-  // ＋ Track dropdown (rebuilt on open from the current selection).
+  // ＋ Light dropdown (scene-light tracks; layers go through ◆ Key layer).
   $('tl-add').addEventListener('click', (e) => {
     e.stopPropagation();
     buildAddTrackMenu();
@@ -1948,13 +1934,11 @@ function wireTimeline() {
 function buildAddTrackMenu() {
   const menu = $('tl-add-menu');
   menu.innerHTML = '';
-  const targets = animatableTargets();
-  const layerId = primaryLayer() && primaryLayer().id;
-  for (const tgt of targets) {
+  for (const prop of SCENE_TARGETS) {
     const b = document.createElement('button');
-    const exists = findTrack(tgt.scope, tgt.scope === 'layer' ? layerId : null, tgt.prop);
-    b.textContent = (tgt.scope === 'scene' ? 'Scene · ' : 'Layer · ') + propLabel(tgt.prop) + (exists ? '  ✓' : '');
-    b.addEventListener('click', () => { menu.hidden = true; addTrackFor(tgt.scope, tgt.prop); });
+    const exists = findTrack('scene', null, prop);
+    b.textContent = propLabel(prop) + (exists ? '  ✓' : '');
+    b.addEventListener('click', () => { menu.hidden = true; addTrackFor('scene', prop); });
     menu.appendChild(b);
   }
 }
