@@ -612,7 +612,7 @@ body {
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
 }
 .dlg-title { margin: 0 0 0.45rem; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
-.dlg-msg { margin: 0 0 1.1rem; color: var(--muted); }
+.dlg-msg { margin: 0 0 1.1rem; color: var(--muted); white-space: pre-line; }
 .dlg-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 .dlg-confirm.danger { border-color: #c0463a; color: #ff6b5e; }
 .dlg-confirm.danger:hover { border-color: #ff6b5e; }

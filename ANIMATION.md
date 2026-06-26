@@ -71,10 +71,21 @@ code. The work is the timeline model, the interpolator, the playback UI, and
 - Motion export: PNG sequence → WebCodecs video → (optional) MediaRecorder / GIF (Phase 3).
 - Path morphing (Phase 4 — the hard one).
 
-**Explicit non-goals:**
-- **No animation in any single-file export.** VD, SVG, and PNG all export a
-  single **current-playhead frame** (still). Motion only comes out via the
-  Phase 3 sequence/video exporters. See §4 for the per-format degradation rule.
+**Explicit non-goals (with one exception):**
+- **Raster motion lives in PNG/SVG frames only.** VD, SVG, and PNG export a
+  single **current-playhead frame** (still); the *raster* timeline's motion comes
+  out via the Phase 3 sequence/video exporters. See §4 for the per-format rule.
+- **Exception — Animated VectorDrawable (AVD), implemented.** There IS one
+  animated single-file export: **`<animated-vector>`** (`export-avd.js`). It maps
+  the AVD-expressible subset of the timeline — per-layer transform (animated
+  `<group>`), `fillAlpha`, and solid `fillColor` — to `<objectAnimator>`
+  keyframes, looping via `repeatCount`. It is built from the **authoring** model
+  (original paths + transforms, not the baked derived frame). Everything
+  gradient-based is unrepresentable (AVD can't animate gradients), so light,
+  emboss/sheen, gradient-stop animation, cast shadows, and emboss shading are
+  dropped — the exporter returns a `warnings` list and the UI confirms before
+  writing. This is the vector counterpart to the raster timeline, not a
+  replacement for it.
 - **VD strips raster filters; SVG keeps them.** Raster material effects (§6) are
   SVG `<filter>`s. Standalone SVG can carry them (browsers render filters);
   VectorDrawable's format cannot, so VD export drops them. This is the one

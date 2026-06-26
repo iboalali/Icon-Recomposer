@@ -11,6 +11,7 @@ import * as P from './path.js';
 import { documentAt, propType, getAtPath } from './animate.js';
 import { previewSvg, standaloneSvg } from './svg.js';
 import { exportVD } from './export-vd.js';
+import { exportAVD } from './export-avd.js';
 import { renderPng } from './export-png.js';
 import { importVector } from './import.js';
 import { createColorField } from './colorpicker.js';
@@ -2131,6 +2132,22 @@ async function doExport(action) {
       const xml = exportVD(derived, d.canvas);
       download(new Blob([xml], { type: 'text/xml' }), exportName('vd' + frameTag, 'xml'));
       toast(animating ? 'Exported VectorDrawable (current frame — animation isn’t included).' : 'Exported VectorDrawable XML.', animating ? 'warn' : '');
+    } else if (action === 'avd') {
+      // Animated VectorDrawable — built from the authoring model (not the baked
+      // derived frame). Warn about anything AVD can't represent before writing.
+      const warnings = [];
+      const xml = exportAVD(d, warnings);
+      if (warnings.length) {
+        const ok = await confirmDialog({
+          title: 'Export Animated VectorDrawable?',
+          message: 'AVD can’t represent these, so they’ll be left out:\n\n• ' + warnings.join('\n• ') + '\n\nExport anyway?',
+          confirmLabel: 'Export anyway',
+          cancelLabel: 'Cancel',
+        });
+        if (!ok) return;
+      }
+      download(new Blob([xml], { type: 'text/xml' }), exportName('avd', 'xml'));
+      toast(warnings.length ? 'Exported Animated VectorDrawable (some parts left out).' : 'Exported Animated VectorDrawable.', warnings.length ? 'warn' : '');
     } else if (action === 'svg') {
       const svg = standaloneSvg(derived, d.canvas.viewportWidth, d.canvas.viewportHeight, { background: true });
       download(new Blob([svg], { type: 'image/svg+xml' }), exportName('svg' + frameTag, 'svg'));

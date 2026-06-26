@@ -32,6 +32,7 @@ const PRECACHE = [
   'derive.js',
   'svg.js',
   'export-vd.js',
+  'export-avd.js',
   'export-png.js',
   'import.js',
   'color.js',

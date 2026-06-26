@@ -35,6 +35,15 @@ into saved project files.
   (Per-stop gradient edits remain on the primary layer.)
 - **Jump-to-end transport button** (⏭) — moves the playhead to the end of the
   timeline, mirroring the ⏮ return-to-start button.
+- **Export to Animated VectorDrawable (AVD).** A new **Animated VectorDrawable
+  XML** export turns the timeline into a real Android `<animated-vector>` — for
+  the parts Android can represent: per-layer **move / scale / rotate** (animated
+  `<group>`), **opacity** (`fillAlpha`), and **base colour on solid fills**
+  (`fillColor`), looping if Loop is on. Because AVD can't animate gradients, the
+  app's gradient-based effects can't come along: on export you get a clear list
+  of anything left out — **light** animation, **emboss/sheen**, **gradient-stop**
+  animation, **cast shadows**, and emboss shading (flattened to a solid colour) —
+  and can choose to export anyway or cancel.
 
 ### Fixed
 
