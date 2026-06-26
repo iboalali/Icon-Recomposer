@@ -83,6 +83,8 @@ const doc = () => appState.document;
 let viewDoc = null;
 const view = () => viewDoc || appState.document;
 const pb = () => appState.ui.playback;
+// The DISPLAYED form of a layer (interpolated when animating, else the base one).
+const viewLayerOf = (id) => view().layers.find((l) => l.id === id) || appState.document.layers.find((l) => l.id === id);
 // Selection is a set of layer ids; the "primary" (last-clicked) layer's values
 // populate the inspector, while edits apply to every selected layer.
 const selectedLayers = () => doc().layers.filter((l) => appState.ui.selectedLayerIds.includes(l.id));
@@ -546,7 +548,10 @@ function hitContext() {
   return _hitCtx;
 }
 function layerAt(vx, vy) {
-  const layers = doc().layers;
+  // Hit-test the DISPLAYED geometry (view layers) so clicks match what's drawn —
+  // during animation a layer is shown at its interpolated transform, not the
+  // base one. view() === doc() when not animating, so static behavior is identical.
+  const layers = view().layers;
   for (let i = layers.length - 1; i >= 0; i--) {
     const l = layers[i];
     if (!l.visible || !l.pathData) continue;
@@ -567,11 +572,16 @@ function startLayerDrag(e, v) {
     startX: v.x,
     startY: v.y,
     moved: false,
-    items: sel.map((l) => ({
-      id: l.id,
-      tx: (l.transform && +l.transform.translateX) || 0,
-      ty: (l.transform && +l.transform.translateY) || 0,
-    })),
+    // Capture the DISPLAYED translate (interpolated when animating) so the layer
+    // follows the cursor from where it's drawn, not from its base position.
+    items: sel.map((l) => {
+      const vl = viewLayerOf(l.id) || l;
+      return {
+        id: l.id,
+        tx: (vl.transform && +vl.transform.translateX) || 0,
+        ty: (vl.transform && +vl.transform.translateY) || 0,
+      };
+    }),
   };
   try { canvasWrap.setPointerCapture(e.pointerId); } catch (_) {}
   e.preventDefault();
@@ -642,9 +652,7 @@ function onCanvasPointerMove(e) {
   for (const it of layerDrag.items) {
     const l = byId.get(it.id);
     if (!l) continue;
-    const t = ensureTransform(l);
-    t.translateX = it.tx + dx; // no clamping — off-canvas is allowed
-    t.translateY = it.ty + dy;
+    setLayerTranslate(l, it.tx + dx, it.ty + dy); // no clamping — off-canvas is allowed
   }
   scheduleRender();
 }
@@ -1154,30 +1162,33 @@ function upsertKey(track, t, value) {
     track.keys.sort((a, b) => a.t - b.t);
   }
 }
-// After a base edit applied inside a gesture, drop a keyframe for `prop` at the
-// playhead — but only if the timeline is enabled AND (REC is on OR a track for
-// this prop already exists). Otherwise the edit just changed the static base
-// value, exactly as before. The keyframe mutates doc().timeline, which is part
-// of the gesture snapshot, so it's one undo step with the edit.
-function recordKeyframe(scope, prop) {
+// Drop a keyframe = `value` for (scope, layerId, prop) at the playhead — but only
+// if the timeline is enabled AND (REC is on OR a track already exists). Otherwise
+// the edit just changed the static base value, exactly as before. The keyframe
+// mutates doc().timeline, part of the gesture snapshot, so it's one undo step.
+function recordKeyframeFor(scope, layerId, prop, value, force) {
   const tl = doc().timeline;
   if (!tl || !tl.enabled) return; // animation off → plain static edit
-  const layerId = scope === 'layer' ? (primaryLayer() && primaryLayer().id) : null;
   if (scope === 'layer' && !layerId) return;
   let track = findTrack(scope, layerId, prop);
-  if (!track && !pb().autokey) return; // not recording and no track → skip
+  if (!track && !force && !pb().autokey) return; // not forced/recording and no track → skip
   const type = propType(scope, prop);
   if (!type) return;
-  const src = scope === 'scene' ? doc() : primaryLayer();
-  const raw = getAtPath(src, prop);
-  if (raw == null) return;
-  const value = type === 'color' ? String(raw).slice(0, 7) : +raw;
-  if (type !== 'color' && !isFinite(value)) return;
+  if (value == null) return;
+  const v = type === 'color' ? String(value).slice(0, 7) : +value;
+  if (type !== 'color' && !isFinite(v)) return;
   if (!track) {
     track = { id: newId('trk'), scope, layerId, prop, type, keys: [] };
     tl.tracks.push(track);
   }
-  upsertKey(track, clampTime(pb().time), value);
+  upsertKey(track, clampTime(pb().time), v);
+}
+// Convenience: record the PRIMARY layer's (or scene's) current value of `prop`.
+function recordKeyframe(scope, prop) {
+  const layerId = scope === 'layer' ? (primaryLayer() && primaryLayer().id) : null;
+  if (scope === 'layer' && !layerId) return;
+  const raw = getAtPath(scope === 'scene' ? doc() : primaryLayer(), prop);
+  recordKeyframeFor(scope, layerId, prop, raw);
 }
 // liveInput + auto-key: runs the base mutation, then records a keyframe for the
 // given (scope, prop) per the rule above. `prop` may be an array (e.g. linked
@@ -1263,16 +1274,22 @@ function wireControls() {
     if (!p || !p.pathData) return;
     const v = +el.value;
     if (!isFinite(v)) return;
-    const dx = v - layerTopLeft(p).x;
-    withSelected((l) => translateLayer(l, dx, 0));
+    const dx = v - layerTopLeft(viewLayerOf(p.id) || p).x; // delta from the DISPLAYED top-left
+    withSelected((l) => {
+      const vl = viewLayerOf(l.id) || l;
+      ensureTransform(l).translateX = ((vl.transform && +vl.transform.translateX) || 0) + dx;
+    });
   });
   animLiveInput($('layer-y'), 'layer', 'transform.translateY', (el) => {
     const p = primaryLayer();
     if (!p || !p.pathData) return;
     const v = +el.value;
     if (!isFinite(v)) return;
-    const dy = v - layerTopLeft(p).y;
-    withSelected((l) => translateLayer(l, 0, dy));
+    const dy = v - layerTopLeft(viewLayerOf(p.id) || p).y;
+    withSelected((l) => {
+      const vl = viewLayerOf(l.id) || l;
+      ensureTransform(l).translateY = ((vl.transform && +vl.transform.translateY) || 0) + dy;
+    });
   });
 
   // Layer · scale — percentage (100 = original), scaling each selected layer in
@@ -1419,10 +1436,16 @@ function ensureTransform(layer) {
   if (!isFinite(+layer.transform.scaleY)) layer.transform.scaleY = 1;
   return layer.transform;
 }
-function translateLayer(layer, dx, dy) {
+// Set a layer's translate to an ABSOLUTE (tx, ty) in viewport units, then record
+// it as a keyframe when its position is animated (or REC is armed) so the
+// DISPLAYED position follows. Sets the base value too, so the static case (and a
+// later timeline-disabled view) is correct. Use for canvas drag / X-Y fields.
+function setLayerTranslate(layer, tx, ty) {
   const t = ensureTransform(layer);
-  t.translateX += dx;
-  t.translateY += dy;
+  t.translateX = tx;
+  t.translateY = ty;
+  recordKeyframeFor('layer', layer.id, 'transform.translateX', tx);
+  recordKeyframeFor('layer', layer.id, 'transform.translateY', ty);
 }
 // Scale every selected layer about the selection's shared "home" center, so a
 // multi-layer shape (e.g. a pen made of several paths) scales as one group and
@@ -1561,6 +1584,32 @@ function addTrackFor(scope, prop) {
     tl.tracks.push({ id: newId('trk'), scope, layerId, prop, type, keys: [{ t: clampTime(pb().time), value, easing: 'linear' }] });
   });
   toast(`Added "${propLabel(prop)}" track.`);
+}
+// The animatable props relevant to a layer's CURRENT look (skips emboss/sheen
+// unless embossed, gradient stops unless a gradient) — used by "Key layer".
+function relevantLayerProps(layer) {
+  const props = ['material.fillAlpha', 'material.baseColor', 'transform.translateX', 'transform.translateY', 'transform.scaleX', 'transform.scaleY'];
+  if (layer.material.fillMode === 'embossed') props.push('material.embossIntensity', 'material.sheen.strength');
+  if (layer.material.fillMode === 'gradient' && layer.material.gradient) {
+    layer.material.gradient.stops.forEach((_, i) => {
+      props.push(`material.gradient.stops.${i}.offset`, `material.gradient.stops.${i}.color`, `material.gradient.stops.${i}.alpha`);
+    });
+  }
+  return props;
+}
+// "Key layer": snapshot the selected layer's CURRENT displayed state into a
+// keyframe at the playhead for every relevant property (creating tracks as
+// needed), so you can move the playhead and change things from there.
+function recordLayerState() {
+  const p = primaryLayer();
+  if (!p) return toast('Select a layer first.', 'warn');
+  const vl = viewLayerOf(p.id) || p; // displayed values (interpolated when animating)
+  const props = relevantLayerProps(p);
+  commit(() => {
+    doc().timeline.enabled = true;
+    for (const prop of props) recordKeyframeFor('layer', p.id, prop, getAtPath(vl, prop), true);
+  });
+  toast(`Keyed "${p.name}" (${props.length} properties) at ${clampTime(pb().time).toFixed(2)}s.`);
 }
 
 // ---- playback loop (real-clock delta; performance.now is fine in the app) ----
@@ -1711,6 +1760,7 @@ function updateTransport() {
   $('tl-rec').classList.toggle('armed', p.autokey);
   $('tl-play').textContent = p.playing ? '⏸' : '▶';
   $('tl-time').textContent = clampTime(p.time).toFixed(2) + ' / ' + (+tl.duration).toFixed(2) + 's';
+  $('tl-key-layer').disabled = !primaryLayer(); // needs a selected layer to key
 }
 let lastTracksKey = null;
 function renderTracks() {
@@ -1785,6 +1835,7 @@ function wireTimeline() {
   $('tl-play').addEventListener('click', togglePlay);
   $('tl-stop').addEventListener('click', stopToStart);
   $('tl-rec').addEventListener('click', () => { pb().autokey = !pb().autokey; updateTransport(); });
+  $('tl-key-layer').addEventListener('click', recordLayerState);
   $('tl-duration').addEventListener('change', () => {
     const v = +$('tl-duration').value;
     if (!isFinite(v)) return;

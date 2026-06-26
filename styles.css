@@ -496,6 +496,7 @@ body {
 }
 .tl-ctl:hover { border-color: var(--accent); }
 .tl-ctl:active { transform: translateY(1px); }
+.tl-ctl:disabled { opacity: 0.4; cursor: default; }
 .tl-ctl.rec[aria-pressed="true"], .tl-ctl.rec.armed { border-color: #c0463a; color: #ff6b5e; }
 .tl-time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 96px; }
 .tl-field { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); white-space: nowrap; }

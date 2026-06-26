@@ -24,6 +24,19 @@ into saved project files.
   Exporting a PNG/SVG while a timeline is on saves the **current frame** (with the
   frame number in the filename), so you can step the playhead and export a
   sequence. The timeline is saved in your project file. (Video export comes next.)
+- **"◆ Key layer" button** in the timeline — snapshots all of the selected
+  layer's animatable properties (opacity, base color, emboss/sheen, position,
+  scale, and gradient stops) as keyframes at the current playhead in one click,
+  so you can move the playhead and change things from there.
+
+### Fixed
+
+- **Selecting, dragging, and the X/Y fields now follow a layer's animated
+  position.** While a layer was animated, its clickable area, drag grab-point,
+  and the Position X/Y fields used the layer's base (un-animated) position, so
+  you had to click/drag where it *used* to be, and a drag could jump. They now
+  use the position shown at the current playhead, and dragging or editing X/Y on
+  an animated layer writes the keyframe so the move actually sticks.
 
 ## [1.8.0] — 2026-06-22
 
