@@ -1183,12 +1183,18 @@ function recordKeyframeFor(scope, layerId, prop, value, force) {
   }
   upsertKey(track, clampTime(pb().time), v);
 }
-// Convenience: record the PRIMARY layer's (or scene's) current value of `prop`.
+// Record the current value of `prop` as a keyframe. Scene props key the scene;
+// layer props key EVERY selected layer (matching withSelected edits), so a
+// multi-selection animates together — EXCEPT gradient stops, which are edited on
+// the primary layer only (per-layer geometry), so they key the primary only.
 function recordKeyframe(scope, prop) {
-  const layerId = scope === 'layer' ? (primaryLayer() && primaryLayer().id) : null;
-  if (scope === 'layer' && !layerId) return;
-  const raw = getAtPath(scope === 'scene' ? doc() : primaryLayer(), prop);
-  recordKeyframeFor(scope, layerId, prop, raw);
+  if (scope === 'scene') {
+    recordKeyframeFor('scene', null, prop, getAtPath(doc(), prop));
+    return;
+  }
+  const isStop = /^material\.gradient\.stops\./.test(prop);
+  const layers = isStop ? [primaryLayer()].filter(Boolean) : selectedLayers();
+  for (const l of layers) recordKeyframeFor('layer', l.id, prop, getAtPath(l, prop));
 }
 // liveInput + auto-key: runs the base mutation, then records a keyframe for the
 // given (scope, prop) per the rule above. `prop` may be an array (e.g. linked
@@ -1597,19 +1603,68 @@ function relevantLayerProps(layer) {
   }
   return props;
 }
-// "Key layer": snapshot the selected layer's CURRENT displayed state into a
-// keyframe at the playhead for every relevant property (creating tracks as
-// needed), so you can move the playhead and change things from there.
-function recordLayerState() {
-  const p = primaryLayer();
-  if (!p) return toast('Select a layer first.', 'warn');
-  const vl = viewLayerOf(p.id) || p; // displayed values (interpolated when animating)
-  const props = relevantLayerProps(p);
+// "Key layer": snapshot the selected layer(s)' CURRENT displayed state into
+// keyframes at the playhead (creating tracks as needed), so you can move the
+// playhead and change things from there. `props` limits which properties are
+// keyed (from the Key-layer menu); omitted → every relevant property per layer.
+// Applies to EVERY selected layer; a prop absent on a layer (e.g. a gradient
+// stop on a solid layer) is skipped for that layer.
+function keyLayers(props) {
+  const sel = selectedLayers();
+  if (!sel.length) return toast('Select a layer first.', 'warn');
   commit(() => {
     doc().timeline.enabled = true;
-    for (const prop of props) recordKeyframeFor('layer', p.id, prop, getAtPath(vl, prop), true);
+    for (const l of sel) {
+      const vl = viewLayerOf(l.id) || l; // displayed values (interpolated when animating)
+      for (const prop of props || relevantLayerProps(l)) {
+        const raw = getAtPath(vl, prop);
+        if (raw == null) continue;
+        recordKeyframeFor('layer', l.id, prop, raw, true);
+      }
+    }
   });
-  toast(`Keyed "${p.name}" (${props.length} properties) at ${clampTime(pb().time).toFixed(2)}s.`);
+  const n = sel.length;
+  toast(`Keyed ${n} layer${n === 1 ? '' : 's'} at ${clampTime(pb().time).toFixed(2)}s.`);
+}
+// Build the Key-layer checkbox menu from the primary layer's relevant props
+// (all checked by default), applied to the whole selection on "Key selected".
+function buildKeyLayerMenu() {
+  const menu = $('tl-key-menu');
+  menu.innerHTML = '';
+  const p = primaryLayer();
+  if (!p) {
+    const d = document.createElement('div');
+    d.className = 'tl-empty';
+    d.textContent = 'Select a layer first.';
+    menu.appendChild(d);
+    return;
+  }
+  const head = document.createElement('div');
+  head.className = 'tl-key-head';
+  head.textContent = 'Key these properties at the playhead:';
+  menu.appendChild(head);
+  for (const prop of relevantLayerProps(p)) {
+    const label = document.createElement('label');
+    label.className = 'tl-key-opt';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.dataset.prop = prop;
+    const span = document.createElement('span');
+    span.textContent = propLabel(prop);
+    label.append(cb, span);
+    menu.appendChild(label);
+  }
+  const apply = document.createElement('button');
+  apply.className = 'tl-key-apply';
+  apply.textContent = 'Key selected properties';
+  apply.addEventListener('click', () => {
+    const props = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map((c) => c.dataset.prop);
+    menu.hidden = true;
+    if (!props.length) return toast('No properties selected.', 'warn');
+    keyLayers(props);
+  });
+  menu.appendChild(apply);
 }
 
 // ---- playback loop (real-clock delta; performance.now is fine in the app) ----
@@ -1835,7 +1890,13 @@ function wireTimeline() {
   $('tl-play').addEventListener('click', togglePlay);
   $('tl-stop').addEventListener('click', stopToStart);
   $('tl-rec').addEventListener('click', () => { pb().autokey = !pb().autokey; updateTransport(); });
-  $('tl-key-layer').addEventListener('click', recordLayerState);
+  $('tl-key-layer').addEventListener('click', (e) => {
+    e.stopPropagation();
+    buildKeyLayerMenu();
+    const m = $('tl-key-menu');
+    m.hidden = !m.hidden;
+  });
+  $('tl-key-menu').addEventListener('click', (e) => e.stopPropagation());
   $('tl-duration').addEventListener('change', () => {
     const v = +$('tl-duration').value;
     if (!isFinite(v)) return;
@@ -1860,7 +1921,7 @@ function wireTimeline() {
     m.hidden = !m.hidden;
   });
   $('tl-add-menu').addEventListener('click', (e) => e.stopPropagation());
-  document.addEventListener('click', () => { $('tl-add-menu').hidden = true; });
+  document.addEventListener('click', () => { $('tl-add-menu').hidden = true; $('tl-key-menu').hidden = true; });
 
   const ruler = $('tl-ruler');
   ruler.addEventListener('pointerdown', onRulerDown);

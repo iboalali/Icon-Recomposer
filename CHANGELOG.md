@@ -7,7 +7,7 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
-## [1.9.0] — 2026-06-26
+## [1.9.0-Beta1] — 2026-06-26
 
 ### Added
 
@@ -24,10 +24,14 @@ into saved project files.
   Exporting a PNG/SVG while a timeline is on saves the **current frame** (with the
   frame number in the filename), so you can step the playhead and export a
   sequence. The timeline is saved in your project file. (Video export comes next.)
-- **"◆ Key layer" button** in the timeline — snapshots all of the selected
-  layer's animatable properties (opacity, base color, emboss/sheen, position,
-  scale, and gradient stops) as keyframes at the current playhead in one click,
+- **"◆ Key layer" button** in the timeline — snapshots a layer's properties as
+  keyframes at the current playhead. Click it to **choose which properties**
+  (opacity, base color, emboss/sheen, position, scale, gradient stops) to key,
   so you can move the playhead and change things from there.
+- **Keyframing applies to the whole selection.** Auto-key (● REC), dragging,
+  the Position X/Y and Scale fields, and Key layer now key **every selected
+  layer** at once, not just the first — so multi-part shapes animate together.
+  (Per-stop gradient edits remain on the primary layer.)
 
 ### Fixed
 

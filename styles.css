@@ -512,8 +512,25 @@ body {
   border-radius: 7px; padding: 0.25rem 0.4rem; font: inherit;
 }
 .tl-spacer { flex: 1 1 0; min-width: 0; }
-/* The add-track menu opens UPWARD — the dock sits at the bottom of the window. */
-#tl-add-menu { top: auto; bottom: calc(100% + 6px); max-height: 50vh; overflow-y: auto; }
+/* Timeline dropdowns open UPWARD — the dock sits at the bottom of the window. */
+#tl-add-menu, #tl-key-menu { top: auto; bottom: calc(100% + 6px); max-height: 50vh; overflow-y: auto; }
+.tl-key-head { color: var(--muted); font-size: 11px; padding: 6px 8px 4px; }
+.tl-key-opt { display: flex; align-items: center; gap: 8px; padding: 0.35rem 0.6rem; border-radius: 7px; cursor: pointer; }
+.tl-key-opt:hover { background: var(--accent-weak); }
+.tl-key-opt input { accent-color: var(--accent); }
+#tl-key-menu .tl-key-apply {
+  width: 100%;
+  text-align: center;
+  margin-top: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent-weak);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 0.45rem;
+  font: inherit;
+  cursor: pointer;
+}
+#tl-key-menu .tl-key-apply:hover { border-color: var(--accent); filter: brightness(1.15); }
 
 .tl-body { padding: 0 0.75rem 0.6rem; }
 .tl-body[hidden] { display: none; }
