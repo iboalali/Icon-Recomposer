@@ -36,6 +36,11 @@ into saved project files.
 
 ### Fixed
 
+- **Position and scale can now be keyframed on any layer.** Keying position or
+  scale (via ◆ Key layer or ● REC) did nothing on a layer that had never been
+  moved or scaled, while opacity and colour worked — and even a created
+  position/scale keyframe wouldn't move the layer on playback. Both are fixed:
+  such layers are treated as starting at their natural position and 100% scale.
 - **Selecting, dragging, and the X/Y fields now follow a layer's animated
   position.** While a layer was animated, its clickable area, drag grab-point,
   and the Position X/Y fields used the layer's base (un-animated) position, so

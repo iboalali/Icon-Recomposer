@@ -1183,6 +1183,17 @@ function recordKeyframeFor(scope, layerId, prop, value, force) {
   }
   upsertKey(track, clampTime(pb().time), v);
 }
+// Read a layer's current value for an animatable prop, defaulting transform
+// fields to identity when the layer has no transform yet — so position/scale can
+// be keyed on a layer that was never moved (transform: null). Returns undefined
+// for genuinely absent props (e.g. a gradient stop on a non-gradient layer),
+// which callers skip.
+const TRANSFORM_DEFAULTS = { 'transform.translateX': 0, 'transform.translateY': 0, 'transform.rotation': 0, 'transform.scaleX': 1, 'transform.scaleY': 1 };
+function layerPropValue(layer, prop) {
+  const v = getAtPath(layer, prop);
+  if (v == null && prop in TRANSFORM_DEFAULTS) return TRANSFORM_DEFAULTS[prop];
+  return v;
+}
 // Record the current value of `prop` as a keyframe. Scene props key the scene;
 // layer props key EVERY selected layer (matching withSelected edits), so a
 // multi-selection animates together — EXCEPT gradient stops, which are edited on
@@ -1194,7 +1205,7 @@ function recordKeyframe(scope, prop) {
   }
   const isStop = /^material\.gradient\.stops\./.test(prop);
   const layers = isStop ? [primaryLayer()].filter(Boolean) : selectedLayers();
-  for (const l of layers) recordKeyframeFor('layer', l.id, prop, getAtPath(l, prop));
+  for (const l of layers) recordKeyframeFor('layer', l.id, prop, layerPropValue(l, prop));
 }
 // liveInput + auto-key: runs the base mutation, then records a keyframe for the
 // given (scope, prop) per the rule above. `prop` may be an array (e.g. linked
@@ -1603,7 +1614,7 @@ function keyLayers(props) {
     for (const l of sel) {
       const vl = viewLayerOf(l.id) || l; // displayed values (interpolated when animating)
       for (const prop of props || relevantLayerProps(l)) {
-        const raw = getAtPath(vl, prop);
+        const raw = layerPropValue(vl, prop);
         if (raw == null) continue;
         recordKeyframeFor('layer', l.id, prop, raw, true);
       }
@@ -2650,3 +2661,4 @@ async function init() {
 }
 
 init();
+

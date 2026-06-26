@@ -143,7 +143,14 @@ export function documentAt(document, t) {
       setAtPath(next, track.prop, value);
     } else {
       const layer = byId.get(track.layerId);
-      if (layer) setAtPath(layer, track.prop, value);
+      if (!layer) continue;
+      // A transform track can target a layer that was never moved/scaled (its
+      // transform is null). Give it an identity transform first so the keyframe
+      // actually applies — setAtPath needs the intermediate object to exist.
+      if (track.prop.startsWith('transform.') && (!layer.transform || typeof layer.transform !== 'object')) {
+        layer.transform = { translateX: 0, translateY: 0, rotation: 0, scaleX: 1, scaleY: 1, pivotX: 0, pivotY: 0 };
+      }
+      setAtPath(layer, track.prop, value);
     }
   }
   return next;
