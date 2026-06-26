@@ -35,6 +35,9 @@ into saved project files.
   (Per-stop gradient edits remain on the primary layer.)
 - **Jump-to-end transport button** (⏭) — moves the playhead to the end of the
   timeline, mirroring the ⏮ return-to-start button.
+- **Playback speed control** — a **Speed** selector (0.25× – 4×) in the timeline
+  changes how fast the *preview* plays, for inspecting fast or slow motion. It's
+  preview-only and never changes the exported duration, frame rate, or frames.
 - **Export to Animated VectorDrawable (AVD).** A new **Animated VectorDrawable
   XML** export turns the timeline into a real Android `<animated-vector>` — for
   the parts Android can represent: per-layer **move / scale / rotate** (animated

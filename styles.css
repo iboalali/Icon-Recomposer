@@ -509,6 +509,10 @@ body {
   background: var(--panel-2); border: 1px solid var(--line-2); color: var(--text);
   border-radius: 7px; padding: 0.25rem 0.4rem; font: inherit;
 }
+.tl-field select {
+  background: var(--panel-2); border: 1px solid var(--line-2); color: var(--text);
+  border-radius: 7px; padding: 0.25rem 0.4rem; font: inherit;
+}
 .tl-ease-wrap { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
 .tl-ease-wrap[hidden] { display: none; }
 .tl-ease-wrap select {

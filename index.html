@@ -441,6 +441,15 @@
         <label class="tl-field">Dur <input id="tl-duration" type="number" min="0.1" step="0.1" class="num" /> s</label>
         <label class="tl-field">FPS <input id="tl-fps" type="number" min="1" max="120" step="1" class="num" /></label>
         <label class="tl-field">Loop <input id="tl-loop" type="checkbox" /></label>
+        <label class="tl-field" title="Preview playback speed (does not affect export)">Speed
+          <select id="tl-speed">
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="4">4×</option>
+          </select>
+        </label>
         <span class="tl-ease-wrap" id="tl-ease-wrap" hidden>Ease
           <select id="tl-ease" title="Easing leaving the selected keyframe">
             <option value="linear">Linear</option>

@@ -46,7 +46,7 @@ const appState = {
     view: { scale: 1, panX: 0, panY: 0 },
     // Timeline playback (ephemeral; never serialized — like `view`). time =
     // playhead seconds; autokey = "record edits as keyframes" (ANIMATION.md D1).
-    playback: { time: 0, playing: false, scrubbing: false, autokey: false, selKey: null },
+    playback: { time: 0, playing: false, scrubbing: false, autokey: false, selKey: null, speed: 1 },
   },
 };
 const undoStack = [];
@@ -1680,7 +1680,7 @@ function startPlayback() {
     const dur = doc().timeline.duration;
     const dt = (ts - playLastTs) / 1000;
     playLastTs = ts;
-    let t = pb().time + dt;
+    let t = pb().time + dt * (pb().speed || 1); // preview speed (export uses real duration/fps)
     if (t >= dur) {
       if (doc().timeline.loop) t = dur > 0 ? t % dur : 0;
       else { t = dur; pb().playing = false; }
@@ -1815,6 +1815,7 @@ function updateTransport() {
   setVal($('tl-duration'), tl.duration);
   setVal($('tl-fps'), tl.fps);
   setChecked($('tl-loop'), tl.loop);
+  setVal($('tl-speed'), String(p.speed || 1));
   $('tl-rec').setAttribute('aria-pressed', String(p.autokey));
   $('tl-rec').classList.toggle('armed', p.autokey);
   $('tl-play').textContent = p.playing ? '⏸' : '▶';
@@ -1917,6 +1918,9 @@ function wireTimeline() {
     if (isFinite(v)) commit(() => { doc().timeline.fps = Math.round(Math.min(120, Math.max(1, v))); });
   });
   $('tl-loop').addEventListener('change', () => commit(() => { doc().timeline.loop = $('tl-loop').checked; }));
+  // Playback speed is preview-only (ephemeral) — it never changes the exported
+  // duration/fps, just how fast the preview plays.
+  $('tl-speed').addEventListener('change', () => { const v = +$('tl-speed').value; pb().speed = isFinite(v) && v > 0 ? v : 1; });
 
   // ＋ Light dropdown (scene-light tracks; layers go through ◆ Key layer).
   $('tl-add').addEventListener('click', (e) => {
@@ -2188,7 +2192,7 @@ function loadDocument(rawDoc, name) {
   appState.ui.projectName = name || 'icon';
   appState.ui.view = { scale: 1, panX: 0, panY: 0 }; // reset zoom/pan on load
   stopPlaybackLoop();
-  appState.ui.playback = { time: 0, playing: false, scrubbing: false, autokey: false, selKey: null };
+  appState.ui.playback = { time: 0, playing: false, scrubbing: false, autokey: false, selKey: null, speed: 1 };
   lastTracksKey = null;
   $('doc-name').value = appState.ui.projectName;
   undoStack.length = 0;
