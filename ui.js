@@ -2497,6 +2497,17 @@ function setupToolbarOverflow() {
 // take over and reload once it controls the page.
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
+  // Local development: don't use the service worker. Its cache-first app-shell
+  // serves stale modules during iteration (you stay one version behind until the
+  // update prompt is accepted), which masks just-saved changes. Unregister any
+  // existing worker so a plain reload always fetches fresh files. Production
+  // (the deployed origin) is unaffected and stays fully offline-capable.
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    navigator.serviceWorker.getRegistrations()
+      .then((regs) => regs.forEach((r) => r.unregister()))
+      .catch(() => {});
+    return;
+  }
   let updateAccepted = false;
   // Reload only after the user accepted an update — ignore the initial control
   // hand-off on first install (clients.claim) so we don't reload on first visit.
