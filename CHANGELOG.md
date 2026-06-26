@@ -33,6 +33,8 @@ into saved project files.
   the Position X/Y and Scale fields, and Key layer now key **every selected
   layer** at once, not just the first — so multi-part shapes animate together.
   (Per-stop gradient edits remain on the primary layer.)
+- **Jump-to-end transport button** (⏭) — moves the playhead to the end of the
+  timeline, mirroring the ⏮ return-to-start button.
 
 ### Fixed
 

@@ -1706,6 +1706,12 @@ function stopToStart() {
   updateTransport();
   scheduleRender();
 }
+function gotoEnd() {
+  stopPlaybackLoop();
+  pb().time = doc().timeline.duration;
+  updateTransport();
+  scheduleRender();
+}
 
 // ---- scrubbing (ruler) ----
 function timeFromClientX(clientX) {
@@ -1886,6 +1892,7 @@ function wireTimeline() {
   $('tl-disable').addEventListener('click', disableTimeline);
   $('tl-play').addEventListener('click', togglePlay);
   $('tl-stop').addEventListener('click', stopToStart);
+  $('tl-end').addEventListener('click', gotoEnd);
   $('tl-rec').addEventListener('click', () => { pb().autokey = !pb().autokey; updateTransport(); });
   $('tl-key-layer').addEventListener('click', (e) => {
     e.stopPropagation();
