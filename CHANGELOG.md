@@ -7,7 +7,7 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
-## [1.9.0-Beta3] — 2026-06-26
+## [1.9.0-Beta4] — 2026-06-26
 
 ### Added
 
@@ -38,6 +38,9 @@ into saved project files.
 
 ### Fixed
 
+- **The transport no longer shifts when you press play.** The play/pause button
+  resized as its glyph swapped (▶ vs ⏸), nudging the rest of the row; the
+  single-glyph transport buttons now have a fixed width.
 - **Position and scale can now be keyframed on any layer.** Keying position or
   scale (via ◆ Key layer or ● REC) did nothing on a layer that had never been
   moved or scaled, while opacity and colour worked — and even a created
