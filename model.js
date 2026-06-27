@@ -8,7 +8,7 @@
 import { propType, coerceKeyValue, EASINGS_LIST } from './animate.js';
 
 export const SCHEMA_VERSION = 3;
-export const APP_VERSION = '1.9.0-Beta5';
+export const APP_VERSION = '1.9.0-Beta6';
 export const FORMAT_ID = 'icon-emboss';
 
 let idCounter = 0;
