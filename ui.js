@@ -286,29 +286,17 @@ function toCanvas(e) {
   };
 }
 
-function toLocal(s, p) {
-  const cx = s.x + s.w / 2;
-  const cy = s.y + s.h / 2;
-  const t = rad(s.rotation);
-  const dx = p.x - cx;
-  const dy = p.y - cy;
-  return { x: dx * Math.cos(t) + dy * Math.sin(t), y: -dx * Math.sin(t) + dy * Math.cos(t) };
-}
-
+// The shape visibly on top at p: the topmost in paint order, unless a
+// crossing puts another shape under p over it.
 function hitTest(p) {
-  const shapes = M.paintOrder(variant().shapes);
-  for (let i = shapes.length - 1; i >= 0; i--) {
-    const s = shapes[i];
-    if (s.hidden) continue;
-    const l = toLocal(s, p);
-    const hw = s.w / 2;
-    const hh = s.h / 2;
-    const inside = s.kind === 'ellipse'
-      ? (l.x / hw) ** 2 + (l.y / hh) ** 2 <= 1
-      : Math.abs(l.x) <= hw && Math.abs(l.y) <= hh;
-    if (inside) return s;
+  const v = variant();
+  const hits = M.paintOrder(v.shapes).filter((s) => !s.hidden && M.insideShape(s, p));
+  let top = hits[hits.length - 1] || null;
+  if (!top) return null;
+  for (const s of hits) {
+    if (s !== top && M.isOver(v, s.id, top.id)) top = s;
   }
-  return null;
+  return top;
 }
 
 // Axis-aligned bounds of a (possibly rotated) shape, for the selection box.
@@ -560,7 +548,10 @@ function deleteShape() {
   const ids = new Set(state.ui.selected);
   if (!ids.size) return;
   edit(() => {
-    for (const v of targets()) v.shapes = v.shapes.filter((x) => !ids.has(x.id));
+    for (const v of targets()) {
+      v.shapes = v.shapes.filter((x) => !ids.has(x.id));
+      M.dropCrossingsOf(v, ids);
+    }
   });
   setSelection([]);
 }
@@ -913,6 +904,75 @@ function singleOnly(ctrl) {
   };
 }
 
+// Lists the shapes the primary shape overlaps (or, with two shapes selected,
+// just the other one) with an Over/Under choice for each crossing.
+function crossingsSection() {
+  const el = document.createElement('section');
+  el.className = 'insp-section';
+  const h = document.createElement('h2');
+  h.textContent = 'Crossings';
+  const intro = document.createElement('p');
+  intro.className = 'hint';
+  const list = document.createElement('div');
+  list.className = 'crossings';
+  el.append(h, intro, list);
+
+  const setOver = (a, b, over) => edit(() => {
+    for (const v of targets()) {
+      const ids = new Set(v.shapes.map((s) => s.id));
+      if (ids.has(a) && ids.has(b)) M.setCrossing(v, a, b, over);
+    }
+  });
+
+  return {
+    el,
+    update() {
+      const sel = selectedShapes();
+      const p = primaryShape();
+      const v = variant();
+      let others = [];
+      if (p && sel.length === 1) others = v.shapes.filter((s) => s.id !== p.id && !s.hidden && M.shapesOverlap(p, s));
+      else if (p && sel.length === 2) others = sel.filter((s) => s.id !== p.id && M.shapesOverlap(p, s));
+      el.hidden = !others.length;
+      if (!others.length) return;
+      intro.textContent = `Where “${p.name}” crosses another shape, it goes:`;
+      list.replaceChildren();
+      for (const o of M.paintOrder(others).reverse()) {
+        const over = M.isOver(v, p.id, o.id);
+        const explicit = !!M.findCrossing(v, p.id, o.id);
+        const row = document.createElement('div');
+        row.className = 'crossing-row';
+        const sw = document.createElement('span');
+        sw.className = `shape-swatch ${o.kind}`;
+        sw.style.background = o.style.color;
+        const name = document.createElement('span');
+        name.className = 'shape-name';
+        name.textContent = o.name;
+        const seg = document.createElement('div');
+        seg.className = 'seg';
+        for (const [label, isOverBtn] of [['Over', true], ['Under', false]]) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = label;
+          btn.classList.toggle('active', over === isOverBtn);
+          btn.title = `Put “${p.name}” ${label.toLowerCase()} “${o.name}” where they cross`;
+          btn.addEventListener('click', () => setOver(p.id, o.id, isOverBtn ? p.id : o.id));
+          seg.append(btn);
+        }
+        const reset = document.createElement('button');
+        reset.type = 'button';
+        reset.className = 'eye';
+        reset.textContent = 'Reset';
+        reset.title = 'Follow the stacking order again';
+        reset.hidden = !explicit;
+        reset.addEventListener('click', () => setOver(p.id, o.id, null));
+        row.append(sw, name, seg, reset);
+        list.append(row);
+      }
+    },
+  };
+}
+
 function buildInspector(root) {
   const sh = () => primaryShape();
   const shapeSet = (fn) => (v) => forSelected((s) => fn(s, v));
@@ -990,7 +1050,8 @@ function buildInspector(root) {
     ],
   });
 
-  root.append(shapeSec.el, lookSec.el, variantSec.el, lightSec.el, bgSec.el);
+  const crossSec = crossingsSection();
+  root.append(shapeSec.el, crossSec.el, lookSec.el, variantSec.el, lightSec.el, bgSec.el);
   return {
     update() {
       const has = !!sh();
@@ -1000,6 +1061,8 @@ function buildInspector(root) {
         shapeSec.update();
         lookSec.update();
       }
+      if (has) crossSec.update();
+      else crossSec.el.hidden = true;
       variantSec.update();
       lightSec.update();
       bgSec.update();

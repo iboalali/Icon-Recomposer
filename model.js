@@ -4,6 +4,11 @@
 // background shapes always paint under foreground ones (paintOrder), as on a
 // launcher. Within a layer, array order is paint order.
 //
+// A variant's crossings override the paint order where two shapes overlap:
+// { over, under } draws `over` on top of `under` inside `under`'s outline, even
+// when `over` paints below it. That allows woven designs, where A is over B, B
+// over C and C over A, which no single stacking order can express.
+//
 // A variant is a complete, independent copy of the design. Shapes keep the same
 // id across variants, so "edit all variants" can find the matching shape in
 // each one. Coordinates are in canvas units: the icon canvas is CANVAS x CANVAS,
@@ -104,6 +109,7 @@ export function newVariant(name = 'Variant 1') {
     scene: defaultScene(),
     background: defaultBackground(),
     shapes: [],
+    crossings: [],
   };
 }
 
@@ -222,7 +228,22 @@ function normalizeVariant(v = {}, i = 0) {
       transparent: !!bg.transparent,
     },
     shapes: Array.isArray(v.shapes) ? v.shapes.map(normalizeShape) : [],
+    crossings: normalizeCrossings(v.crossings, v.shapes),
   };
+}
+
+function normalizeCrossings(list, shapes) {
+  const ids = new Set(Array.isArray(shapes) ? shapes.map((s) => s && s.id) : []);
+  const seen = new Set();
+  const out = [];
+  for (const c of Array.isArray(list) ? list : []) {
+    if (!c || !ids.has(c.over) || !ids.has(c.under) || c.over === c.under) continue;
+    const key = crossingKey(c.over, c.under);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ over: c.over, under: c.under });
+  }
+  return out;
 }
 
 // Throws with a readable message when the JSON is not a project of this app.
@@ -261,4 +282,65 @@ export function slug(s) {
 
 export function paintOrder(shapes) {
   return [...shapes.filter((s) => s.layer === 'background'), ...shapes.filter((s) => s.layer !== 'background')];
+}
+
+export function crossingKey(a, b) {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+export function findCrossing(variant, a, b) {
+  const key = crossingKey(a, b);
+  return (variant.crossings || []).find((c) => crossingKey(c.over, c.under) === key) || null;
+}
+
+// Sets which of two shapes is on top where they cross, or clears the override
+// (over = null) so the paint order decides again.
+export function setCrossing(variant, a, b, over) {
+  const key = crossingKey(a, b);
+  variant.crossings = (variant.crossings || []).filter((c) => crossingKey(c.over, c.under) !== key);
+  if (over) variant.crossings.push({ over, under: over === a ? b : a });
+}
+
+export function dropCrossingsOf(variant, ids) {
+  variant.crossings = (variant.crossings || []).filter((c) => !ids.has(c.over) && !ids.has(c.under));
+}
+
+// Whether `a` is visibly on top of `b` where they overlap.
+export function isOver(variant, a, b) {
+  const c = findCrossing(variant, a, b);
+  if (c) return c.over === a;
+  const order = paintOrder(variant.shapes).map((s) => s.id);
+  return order.indexOf(a) > order.indexOf(b);
+}
+
+export function insideShape(s, p) {
+  const t = (s.rotation * Math.PI) / 180;
+  const dx = p.x - (s.x + s.w / 2);
+  const dy = p.y - (s.y + s.h / 2);
+  const lx = dx * Math.cos(t) + dy * Math.sin(t);
+  const ly = -dx * Math.sin(t) + dy * Math.cos(t);
+  const hw = s.w / 2;
+  const hh = s.h / 2;
+  return s.kind === 'ellipse'
+    ? (lx / hw) ** 2 + (ly / hh) ** 2 <= 1
+    : Math.abs(lx) <= hw && Math.abs(ly) <= hh;
+}
+
+// Samples a grid inside `a` and reports whether any sample lies inside `b`.
+export function shapesOverlap(a, b) {
+  const n = 16;
+  const t = (a.rotation * Math.PI) / 180;
+  const c = Math.cos(t);
+  const sn = Math.sin(t);
+  const cx = a.x + a.w / 2;
+  const cy = a.y + a.h / 2;
+  for (let i = 0; i <= n; i++) {
+    for (let j = 0; j <= n; j++) {
+      const lx = (i / n - 0.5) * a.w;
+      const ly = (j / n - 0.5) * a.h;
+      const p = { x: cx + lx * c - ly * sn, y: cy + lx * sn + ly * c };
+      if (insideShape(a, p) && insideShape(b, p)) return true;
+    }
+  }
+  return false;
 }

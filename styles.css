@@ -412,3 +412,19 @@ body.file-drag::after {
 .swatch-btn.mixed {
   background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.35) 0 6px, rgba(0, 0, 0, 0.25) 6px 12px) !important;
 }
+.crossings { display: flex; flex-direction: column; gap: 0.35rem; }
+.crossing-row { display: flex; align-items: center; gap: 0.5rem; }
+.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 7px; overflow: hidden; flex: 0 0 auto; }
+.seg button {
+  appearance: none;
+  border: 0;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--line-2); }
+.seg button.active { background: var(--accent-weak); color: var(--text); }
+.seg button:hover { color: var(--text); }

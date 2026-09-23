@@ -22,6 +22,7 @@ const BASE_CSS = `
 .ir-stage { position: relative; width: ${CANVAS}px; height: ${CANVAS}px; overflow: hidden; }
 .ir-shape, .ir-halo { position: absolute; box-sizing: border-box; }
 .ir-halo { background: transparent; pointer-events: none; }
+.ir-clip { position: absolute; box-sizing: border-box; overflow: hidden; pointer-events: none; }
 `;
 
 let cssPromise = null;
@@ -68,14 +69,16 @@ function localLight(scene, rotationDeg) {
   };
 }
 
-function geometryCss(shape) {
+// place: where the element sits in its container ({ x, y, rotation }); it
+// differs from the shape's own values only inside a crossing clip.
+function geometryCss(shape, place = shape) {
   const radius = shape.kind === 'ellipse' ? '50%' : `${num(shape.radius)}px`;
-  let css = `left:${num(shape.x)}px;top:${num(shape.y)}px;width:${num(shape.w)}px;height:${num(shape.h)}px;border-radius:${radius};`;
-  if (shape.rotation) css += `transform:rotate(${num(shape.rotation)}deg);`;
+  let css = `left:${num(place.x)}px;top:${num(place.y)}px;width:${num(shape.w)}px;height:${num(shape.h)}px;border-radius:${radius};`;
+  if (place.rotation) css += `transform:rotate(${num(place.rotation)}deg);`;
   return css;
 }
 
-function shapeMarkup(shape, scene) {
+function shapeMarkup(shape, scene, place = shape) {
   const st = shape.style;
   const classes = ['ir-shape', 'ambient'];
   if (st.material === 'glass') {
@@ -99,14 +102,35 @@ function shapeMarkup(shape, scene) {
     `--amb-curve-scale:${num(st.curveScale)}`,
     `--amb-grain-amount:${num(st.grain)}`,
   ].join(';');
-  const geo = geometryCss(shape);
+  const geo = geometryCss(shape, place);
   const opacity = st.opacity < 1 ? `opacity:${num(st.opacity)};` : '';
   let out = '';
   if (st.glow && st.glowSize > 0) {
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
-  out += `<div class="${classes.join(' ')}" data-id="${esc(shape.id)}" style="${geo}${opacity}${vars}"></div>`;
+  const id = place === shape ? ` data-id="${esc(shape.id)}"` : '';
+  out += `<div class="${classes.join(' ')}"${id} style="${geo}${opacity}${vars}"></div>`;
   return out;
+}
+
+// Draws `over` again inside a box shaped like `under` that clips everything
+// outside it, so within `under`'s outline `over` and its shadow sit on top.
+// The copy is placed in the clip box's rotated frame; its light still turns
+// with its full world angle because localLight uses the shape's own rotation.
+function crossingMarkup(over, under, scene) {
+  const t = (under.rotation * Math.PI) / 180;
+  const c = Math.cos(t);
+  const s = Math.sin(t);
+  const dx = over.x + over.w / 2 - (under.x + under.w / 2);
+  const dy = over.y + over.h / 2 - (under.y + under.h / 2);
+  const lx = dx * c + dy * s;
+  const ly = -dx * s + dy * c;
+  const place = {
+    x: under.w / 2 + lx - over.w / 2,
+    y: under.h / 2 + ly - over.h / 2,
+    rotation: (over.rotation || 0) - (under.rotation || 0),
+  };
+  return `<div class="ir-clip" style="${geometryCss(under)}">${shapeMarkup(over, scene, place)}</div>`;
 }
 
 // layer: 'all' (the composite), 'foreground' (no background) or 'background'.
@@ -124,9 +148,25 @@ export function stageMarkup(variant, { layer = 'all', transparent = false } = {}
   if (transparent || layer === 'foreground' || bg.transparent) style += 'background:transparent;';
   else if (bg.lit) style += `--amb-albedo:${bg.color};background:var(--amb-lit);`;
   else style += `background:${bg.color};`;
-  const shapes = paintOrder(variant.shapes)
-    .filter((s) => !s.hidden && (layer === 'all' || s.layer === layer))
-    .map((s) => shapeMarkup(s, sc))
+  const ordered = paintOrder(variant.shapes);
+  const rank = new Map(ordered.map((s, i) => [s.id, i]));
+  const byId = new Map(ordered.map((s) => [s.id, s]));
+  const drawn = (s) => s && !s.hidden && (layer === 'all' || s.layer === layer);
+  const patches = new Map();
+  for (const cr of variant.crossings || []) {
+    const over = byId.get(cr.over);
+    const under = byId.get(cr.under);
+    if (!over || !under || over.hidden || !drawn(under)) continue;
+    if (rank.get(over.id) > rank.get(under.id)) continue; // already on top
+    if (!patches.has(under.id)) patches.set(under.id, []);
+    patches.get(under.id).push(over);
+  }
+  const shapes = ordered
+    .filter(drawn)
+    .map((s) => shapeMarkup(s, sc) + (patches.get(s.id) || [])
+      .sort((a, b) => rank.get(a.id) - rank.get(b.id))
+      .map((o) => crossingMarkup(o, s, sc))
+      .join(''))
     .join('');
   return `<div class="ir-stage" style="${style}">${shapes}</div>`;
 }
