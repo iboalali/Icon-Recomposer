@@ -22,7 +22,6 @@ const BASE_CSS = `
 .ir-stage { position: relative; width: ${CANVAS}px; height: ${CANVAS}px; overflow: hidden; }
 .ir-shape, .ir-halo { position: absolute; box-sizing: border-box; }
 .ir-halo { background: transparent; pointer-events: none; }
-.ir-clip { position: absolute; box-sizing: border-box; overflow: hidden; pointer-events: none; }
 `;
 
 let cssPromise = null;
@@ -69,16 +68,16 @@ function localLight(scene, rotationDeg) {
   };
 }
 
-// place: where the element sits in its container ({ x, y, rotation }); it
-// differs from the shape's own values only inside a crossing clip.
-function geometryCss(shape, place = shape) {
+function geometryCss(shape) {
   const radius = shape.kind === 'ellipse' ? '50%' : `${num(shape.radius)}px`;
-  let css = `left:${num(place.x)}px;top:${num(place.y)}px;width:${num(shape.w)}px;height:${num(shape.h)}px;border-radius:${radius};`;
-  if (place.rotation) css += `transform:rotate(${num(place.rotation)}deg);`;
+  let css = `left:${num(shape.x)}px;top:${num(shape.y)}px;width:${num(shape.w)}px;height:${num(shape.h)}px;border-radius:${radius};`;
+  if (shape.rotation) css += `transform:rotate(${num(shape.rotation)}deg);`;
   return css;
 }
 
-function shapeMarkup(shape, scene, place = shape) {
+// extra: CSS appended to the element (and its glow), e.g. a crossing clip-path.
+// A copy (extra set) carries no data-id, so hit tests see only the original.
+function shapeMarkup(shape, scene, extra = '') {
   const st = shape.style;
   const classes = ['ir-shape', 'ambient'];
   if (st.material === 'glass') {
@@ -102,35 +101,109 @@ function shapeMarkup(shape, scene, place = shape) {
     `--amb-curve-scale:${num(st.curveScale)}`,
     `--amb-grain-amount:${num(st.grain)}`,
   ].join(';');
-  const geo = geometryCss(shape, place);
+  const geo = geometryCss(shape) + extra;
   const opacity = st.opacity < 1 ? `opacity:${num(st.opacity)};` : '';
   let out = '';
   if (st.glow && st.glowSize > 0) {
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
-  const id = place === shape ? ` data-id="${esc(shape.id)}"` : '';
+  const id = extra ? '' : ` data-id="${esc(shape.id)}"`;
   out += `<div class="${classes.join(' ')}"${id} style="${geo}${opacity}${vars}"></div>`;
   return out;
 }
 
-// Draws `over` again inside a box shaped like `under` that clips everything
-// outside it, so within `under`'s outline `over` and its shadow sit on top.
-// The copy is placed in the clip box's rotated frame; its light still turns
-// with its full world angle because localLight uses the shape's own rotation.
-function crossingMarkup(over, under, scene) {
-  const t = (under.rotation * Math.PI) / 180;
+// Outline of a shape as a convex polygon in canvas coordinates. Rounded
+// corners and ellipses are sampled finely enough to be invisible as facets.
+function outline(shape, pad = 0) {
+  const w = shape.w + pad * 2;
+  const h = shape.h + pad * 2;
+  const pts = [];
+  if (shape.kind === 'ellipse' && !pad) {
+    for (let i = 0; i < 72; i++) {
+      const a = (i / 72) * Math.PI * 2;
+      pts.push([(Math.cos(a) * w) / 2, (Math.sin(a) * h) / 2]);
+    }
+  } else {
+    const r = pad ? 0 : Math.min(shape.radius || 0, w / 2, h / 2);
+    const corners = [[w / 2 - r, h / 2 - r, 0], [-w / 2 + r, h / 2 - r, 90], [-w / 2 + r, -h / 2 + r, 180], [w / 2 - r, -h / 2 + r, 270]];
+    for (const [cx, cy, start] of corners) {
+      const steps = r ? 12 : 0;
+      for (let i = 0; i <= steps; i++) {
+        const a = ((start + (90 * i) / (steps || 1)) * Math.PI) / 180;
+        pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+      }
+    }
+  }
+  const t = (shape.rotation * Math.PI) / 180;
   const c = Math.cos(t);
   const s = Math.sin(t);
-  const dx = over.x + over.w / 2 - (under.x + under.w / 2);
-  const dy = over.y + over.h / 2 - (under.y + under.h / 2);
-  const lx = dx * c + dy * s;
-  const ly = -dx * s + dy * c;
-  const place = {
-    x: under.w / 2 + lx - over.w / 2,
-    y: under.h / 2 + ly - over.h / 2,
-    rotation: (over.rotation || 0) - (under.rotation || 0),
-  };
-  return `<div class="ir-clip" style="${geometryCss(under)}">${shapeMarkup(over, scene, place)}</div>`;
+  const ox = shape.x + shape.w / 2;
+  const oy = shape.y + shape.h / 2;
+  return pts.map(([x, y]) => [ox + x * c - y * s, oy + x * s + y * c]);
+}
+
+// Canvas points → the element's own untransformed box (clip-path space).
+function toBox(shape, pts) {
+  const t = (shape.rotation * Math.PI) / 180;
+  const c = Math.cos(t);
+  const s = Math.sin(t);
+  const ox = shape.x + shape.w / 2;
+  const oy = shape.y + shape.h / 2;
+  return pts.map(([x, y]) => {
+    const dx = x - ox;
+    const dy = y - oy;
+    return [dx * c + dy * s + shape.w / 2, -dx * s + dy * c + shape.h / 2];
+  });
+}
+
+// Sutherland-Hodgman: subject clipped by a convex polygon (both counterclockwise
+// or both clockwise, as outline() produces).
+function clipPolygon(subject, clip) {
+  let out = subject;
+  for (let i = 0; i < clip.length && out.length; i++) {
+    const a = clip[i];
+    const b = clip[(i + 1) % clip.length];
+    const side = (p) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+    const input = out;
+    out = [];
+    for (let j = 0; j < input.length; j++) {
+      const p = input[j];
+      const q = input[(j + 1) % input.length];
+      const sp = side(p);
+      const sq = side(q);
+      if (sp >= 0) out.push(p);
+      if ((sp >= 0) !== (sq >= 0)) {
+        const k = sp / (sp - sq);
+        out.push([p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k]);
+      }
+    }
+  }
+  return out;
+}
+
+const clipCss = (pts) => `clip-path:polygon(${pts.map(([x, y]) => `${num(x)}px ${num(y)}px`).join(',')});`;
+
+// How far a shape's drop shadow can reach past its outline (ambient.css's
+// outermost layer: offset + blur + spread, at the longest light component).
+function shadowReach(shape) {
+  const { elevation: e, thickness: k } = shape.style;
+  return e * 6.8 + k * 3.8 + e * 4.8 + k * 2.7 + 1;
+}
+
+// Puts `over` on top of `under` where they cross, with two copies of `over`
+// drawn right after `under`, each at its real position and clipped with a
+// clip-path (which also clips its shadow):
+// 1. to `under`'s outline: `over`'s body and its shadow on `under`;
+// 2. to `over`'s own outline within reach of `under`'s shadow: hides the
+//    shadow `under` casts onto `over`, without doubling `over`'s shadow on
+//    whatever lies around it.
+// Shapes that paint after `under` still cover both copies.
+function crossingMarkup(over, under, scene) {
+  const onUnder = clipCss(toBox(over, outline(under)));
+  const own = clipPolygon(outline(over), outline(under, shadowReach(under)));
+  let out = shapeMarkup(over, scene, onUnder);
+  if (own.length > 2) out += shapeMarkup(over, scene, clipCss(toBox(over, own)));
+  return out;
 }
 
 // layer: 'all' (the composite), 'foreground' (no background) or 'background'.
