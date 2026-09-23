@@ -45,6 +45,7 @@
           <button class="tbtn small" id="btn-shape-down" type="button" title="Move down">Down</button>
           <button class="tbtn small" id="btn-shape-dup" type="button" title="Duplicate (Ctrl+D)">Duplicate</button>
           <button class="tbtn small danger" id="btn-shape-del" type="button" title="Delete (Del)">Delete</button>
+          <button class="tbtn small" id="btn-shape-copy" type="button" title="Copy the selected shapes to other variants">Copy to…</button>
         </div>
       </section>
       <section class="block">
@@ -88,6 +89,7 @@
         <div class="block-head">
           <h2>Variants</h2>
           <div class="head-actions">
+            <button class="tbtn small" id="btn-var-copy" type="button" title="Copy parts of this variant to other variants">Copy to…</button>
             <button class="tbtn small" id="btn-var-dup" type="button">Duplicate</button>
             <button class="tbtn small danger" id="btn-var-del" type="button">Delete</button>
           </div>
@@ -133,6 +135,47 @@
       <div class="dlg-actions">
         <button class="tbtn" id="ex-cancel" type="button">Cancel</button>
         <button class="tbtn primary" id="ex-go" type="button">Export</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dlg-overlay" id="copy-overlay" hidden>
+    <div class="dlg copy-dlg" role="dialog" aria-modal="true" aria-labelledby="copy-title">
+      <h2 class="dlg-title" id="copy-title">Copy to variants</h2>
+      <p class="hint" id="copy-from"></p>
+      <div class="copy-grid">
+        <div class="export-opts">
+          <fieldset>
+            <legend>Shapes</legend>
+            <label class="check"><input type="radio" name="copy-scope" value="selected" /> <span id="copy-scope-selected">Selected shapes</span></label>
+            <label class="check"><input type="radio" name="copy-scope" value="all" /> <span id="copy-scope-all">All shapes</span></label>
+            <div id="copy-shape-parts"></div>
+          </fieldset>
+          <fieldset>
+            <legend>Variant</legend>
+            <div id="copy-variant-parts"></div>
+          </fieldset>
+        </div>
+        <div class="export-opts">
+          <fieldset>
+            <legend>To</legend>
+            <div id="copy-targets"></div>
+            <div class="row-actions">
+              <button class="tbtn small" id="copy-all" type="button">All</button>
+              <button class="tbtn small" id="copy-none" type="button">None</button>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Apply to</legend>
+            <label class="check"><input type="radio" name="copy-mode" value="change" checked /> <span>The ticked variants</span></label>
+            <label class="check"><input type="radio" name="copy-mode" value="duplicate" /> <span>New copies of the ticked variants (originals stay as they are)</span></label>
+          </fieldset>
+        </div>
+      </div>
+      <p class="hint" id="copy-summary"></p>
+      <div class="dlg-actions">
+        <button class="tbtn" id="copy-cancel" type="button">Cancel</button>
+        <button class="tbtn primary" id="copy-go" type="button">Copy</button>
       </div>
     </div>
   </div>

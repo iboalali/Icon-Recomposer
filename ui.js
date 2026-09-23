@@ -494,6 +494,7 @@ function renderShapeList() {
   }
   const none = !state.ui.selected.length;
   for (const id of ['btn-shape-up', 'btn-shape-down', 'btn-shape-dup', 'btn-shape-del']) $(id).disabled = none;
+  $('btn-shape-copy').disabled = none || state.doc.variants.length < 2;
 }
 
 // Ctrl/Cmd-click toggles, Shift-click selects the range from the primary shape
@@ -629,6 +630,7 @@ function renderVariants() {
   }
   if (strip.lastChild !== addCard) strip.append(addCard);
   $('btn-var-del').disabled = state.doc.variants.length < 2;
+  $('btn-var-copy').disabled = state.doc.variants.length < 2;
 }
 
 const addCard = document.createElement('button');
@@ -862,6 +864,15 @@ function lightPad() {
   };
 }
 
+function actionButton(label, onClick, disabled) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'tbtn small insp-action';
+  btn.textContent = label;
+  btn.addEventListener('click', onClick);
+  return { el: btn, update() { btn.disabled = !!disabled?.(); } };
+}
+
 const forScene = (fn) => { for (const v of targets()) fn(v.scene); };
 const forBackground = (fn) => { for (const v of targets()) fn(v.background); };
 
@@ -1026,6 +1037,7 @@ function buildInspector(root) {
     singleOnly(pair('Size', numberInput('W', { step: 0.5, ...geoCtl('w') }), numberInput('H', { step: 0.5, ...geoCtl('h') }))),
     slider('Corner radius', { min: 0, max: 54, step: 0.5, ...geoCtl('radius') }),
     slider('Rotation', { min: -180, max: 180, step: 1, ...geoCtl('rotation') }),
+    actionButton('Copy to variants…', () => openCopy('selected'), () => state.doc.variants.length < 2),
   ]);
 
   const lookSec = section('Look', [
@@ -1148,7 +1160,7 @@ function setupFileDrop() {
     e.preventDefault();
     depth = 0;
     document.body.classList.remove('file-drag');
-    if (isDialogOpen() || !$('export-overlay').hidden) return;
+    if (isDialogOpen() || !$('export-overlay').hidden || !$('copy-overlay').hidden) return;
     const f = e.dataTransfer.files[0];
     if (f) openFile(f);
     else toast('The browser did not pass the dropped file. Use Open instead.', 'error');
@@ -1287,6 +1299,126 @@ async function doExport() {
 }
 
 // ---------------------------------------------------------------------------
+// copy to variants
+
+const copyUi = { shapeBoxes: new Map(), variantBoxes: new Map() };
+const COPY_DEFAULTS = new Set(['geometry', 'look']);
+
+function checkRow(parent, id, label) {
+  const lab = document.createElement('label');
+  lab.className = 'check';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.value = id;
+  const span = document.createElement('span');
+  span.textContent = label;
+  lab.append(box, span);
+  parent.append(lab);
+  return box;
+}
+
+function setupCopyDialog() {
+  for (const p of M.COPY_SHAPE_PARTS) copyUi.shapeBoxes.set(p.id, checkRow($('copy-shape-parts'), p.id, p.label));
+  for (const p of M.COPY_VARIANT_PARTS) copyUi.variantBoxes.set(p.id, checkRow($('copy-variant-parts'), p.id, p.label));
+  const overlay = $('copy-overlay');
+  overlay.addEventListener('change', updateCopySummary);
+  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) closeCopy(); });
+  overlay.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') closeCopy();
+  });
+  const setTargets = (on) => {
+    for (const box of $('copy-targets').querySelectorAll('input')) box.checked = on;
+    updateCopySummary();
+  };
+  $('copy-all').addEventListener('click', () => setTargets(true));
+  $('copy-none').addEventListener('click', () => setTargets(false));
+  $('copy-cancel').addEventListener('click', closeCopy);
+  $('copy-go').addEventListener('click', doCopy);
+}
+
+// scope: 'selected' to start from the selected shapes, 'all' for every shape.
+function openCopy(scope) {
+  commit();
+  const v = variant();
+  const nSel = selectedShapes().length;
+  $('copy-from').textContent = `From “${v.name}”`;
+  $('copy-scope-selected').textContent = `Selected shapes (${nSel})`;
+  $('copy-scope-all').textContent = `All shapes (${v.shapes.length})`;
+  const selRadio = document.querySelector('input[name="copy-scope"][value="selected"]');
+  selRadio.disabled = !nSel;
+  document.querySelector(`input[name="copy-scope"][value="${scope === 'selected' && nSel ? 'selected' : 'all'}"]`).checked = true;
+  for (const [id, box] of copyUi.shapeBoxes) box.checked = COPY_DEFAULTS.has(id);
+  for (const box of copyUi.variantBoxes.values()) box.checked = false;
+  const targets = $('copy-targets');
+  targets.replaceChildren();
+  for (const other of state.doc.variants) {
+    if (other.id === v.id) continue;
+    checkRow(targets, other.id, other.name).checked = true;
+  }
+  document.querySelector('input[name="copy-mode"][value="change"]').checked = true;
+  $('copy-overlay').hidden = false;
+  $('copy-go').focus();
+  updateCopySummary();
+}
+
+function closeCopy() {
+  $('copy-overlay').hidden = true;
+}
+
+function copySettings() {
+  const v = variant();
+  const scope = document.querySelector('input[name="copy-scope"]:checked').value;
+  const ids = scope === 'selected' ? selectedShapes().map((s) => s.id) : v.shapes.map((s) => s.id);
+  const parts = new Set([...copyUi.shapeBoxes, ...copyUi.variantBoxes].filter(([, b]) => b.checked).map(([id]) => id));
+  const targets = [...$('copy-targets').querySelectorAll('input:checked')].map((b) => b.value);
+  const duplicate = document.querySelector('input[name="copy-mode"]:checked').value === 'duplicate';
+  return { ids, parts, targets, duplicate };
+}
+
+function copyProblem({ ids, parts, targets }) {
+  if (!targets.length) return 'Tick at least one variant to copy to.';
+  if (!parts.size) return 'Tick at least one thing to copy.';
+  const needsShapes = [...parts].every((p) => p !== 'light' && p !== 'background');
+  if (needsShapes && !ids.length) return 'There are no shapes to copy.';
+  return '';
+}
+
+function updateCopySummary() {
+  const settings = copySettings();
+  const problem = copyProblem(settings);
+  const n = settings.targets.length;
+  const plural = n === 1 ? '' : 's';
+  $('copy-summary').textContent = problem
+    || (settings.duplicate ? `Creates ${n} new variant${plural} next to the originals.` : `Changes ${n} variant${plural}. You can undo this.`);
+  $('copy-go').disabled = !!problem;
+}
+
+function doCopy() {
+  const settings = copySettings();
+  if (copyProblem(settings)) return;
+  const { ids, parts, targets, duplicate } = settings;
+  const src = structuredClone(variant());
+  const current = variant().id;
+  edit(() => {
+    for (const id of targets) {
+      const i = state.doc.variants.findIndex((x) => x.id === id);
+      if (i < 0) continue;
+      let dst = state.doc.variants[i];
+      if (duplicate) {
+        dst = M.duplicateVariant(dst, nextVariantName(dst.name));
+        state.doc.variants.splice(i + 1, 0, dst);
+      }
+      M.copyIntoVariant(src, dst, ids, parts);
+    }
+  });
+  state.ui.variant = state.doc.variants.findIndex((x) => x.id === current);
+  closeCopy();
+  toast(duplicate ? `Created ${targets.length} new variant${targets.length === 1 ? '' : 's'}` : `Copied to ${targets.length} variant${targets.length === 1 ? '' : 's'}`);
+  scheduleRender();
+}
+
+// ---------------------------------------------------------------------------
 // keyboard
 
 function isTyping(e) {
@@ -1295,7 +1427,7 @@ function isTyping(e) {
 }
 
 function onKey(e) {
-  if (isDialogOpen() || !$('export-overlay').hidden) return;
+  if (isDialogOpen() || !$('export-overlay').hidden || !$('copy-overlay').hidden) return;
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
   if (mod && k === 's') { e.preventDefault(); saveProject(); return; }
@@ -1348,6 +1480,8 @@ async function init() {
   $('btn-shape-dup').addEventListener('click', duplicateShape);
   $('btn-shape-del').addEventListener('click', deleteShape);
   $('btn-var-dup').addEventListener('click', duplicateCurrentVariant);
+  $('btn-var-copy').addEventListener('click', () => openCopy('all'));
+  $('btn-shape-copy').addEventListener('click', () => openCopy('selected'));
   $('btn-var-del').addEventListener('click', deleteCurrentVariant);
   $('edit-all').addEventListener('change', (e) => { state.ui.editAll = e.target.checked; });
   $('show-guides').addEventListener('change', (e) => { state.ui.guides = e.target.checked; scheduleRender(); });
@@ -1363,6 +1497,7 @@ async function init() {
   setupFileDrop();
 
   setupExportDialog();
+  setupCopyDialog();
   fitStage();
   render();
 }

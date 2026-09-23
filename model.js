@@ -344,3 +344,74 @@ export function shapesOverlap(a, b) {
   }
   return false;
 }
+
+// What "Copy to variants" can carry, per shape and per variant.
+export const COPY_SHAPE_PARTS = [
+  { id: 'geometry', label: 'Geometry (position, size, corners, rotation, kind)' },
+  { id: 'look', label: 'Look (material, surface, depth, edges, opacity, glow)' },
+  { id: 'color', label: 'Colors (shape and glow color)' },
+  { id: 'layer', label: 'Layer and visibility' },
+];
+export const COPY_VARIANT_PARTS = [
+  { id: 'light', label: 'Light' },
+  { id: 'background', label: 'Background' },
+  { id: 'crossings', label: 'Crossings' },
+  { id: 'order', label: 'Stacking order' },
+  { id: 'missing', label: 'Add shapes the variant does not have' },
+];
+
+const GEOMETRY_KEYS = ['kind', 'x', 'y', 'w', 'h', 'radius', 'rotation'];
+const COLOR_KEYS = ['color', 'glowColor'];
+
+// Copies the chosen parts of the shapes `ids` (and the chosen variant-wide
+// parts) from `src` into `dst`. Shapes are matched by id.
+//   parts: Set of COPY_SHAPE_PARTS / COPY_VARIANT_PARTS ids
+export function copyIntoVariant(src, dst, ids, parts) {
+  const scope = new Set(ids);
+  const srcShapes = src.shapes.filter((s) => scope.has(s.id));
+
+  if (parts.has('missing')) {
+    for (const s of srcShapes) {
+      if (dst.shapes.some((d) => d.id === s.id)) continue;
+      const i = src.shapes.indexOf(s);
+      const before = src.shapes.slice(0, i).reverse().find((p) => dst.shapes.some((d) => d.id === p.id));
+      const at = before ? dst.shapes.findIndex((d) => d.id === before.id) + 1 : 0;
+      dst.shapes.splice(at, 0, structuredClone(s));
+    }
+  }
+
+  for (const s of srcShapes) {
+    const d = dst.shapes.find((x) => x.id === s.id);
+    if (!d) continue;
+    if (parts.has('geometry')) for (const k of GEOMETRY_KEYS) d[k] = s[k];
+    if (parts.has('look')) {
+      for (const k of Object.keys(s.style)) if (!COLOR_KEYS.includes(k)) d.style[k] = s.style[k];
+    }
+    if (parts.has('color')) for (const k of COLOR_KEYS) d.style[k] = s.style[k];
+    if (parts.has('layer')) {
+      d.layer = s.layer;
+      d.hidden = s.hidden;
+    }
+  }
+
+  if (parts.has('order')) {
+    // The in-scope shapes keep dst's slots but take src's order among them.
+    const rank = new Map(src.shapes.map((s, i) => [s.id, i]));
+    const slots = [];
+    dst.shapes.forEach((d, i) => { if (scope.has(d.id) && rank.has(d.id)) slots.push(i); });
+    const sorted = slots.map((i) => dst.shapes[i]).sort((a, b) => rank.get(a.id) - rank.get(b.id));
+    slots.forEach((slot, k) => { dst.shapes[slot] = sorted[k]; });
+  }
+
+  if (parts.has('crossings')) {
+    const inDst = new Set(dst.shapes.map((d) => d.id));
+    const touches = (c) => scope.has(c.over) || scope.has(c.under);
+    dst.crossings = (dst.crossings || []).filter((c) => !touches(c));
+    for (const c of src.crossings || []) {
+      if (touches(c) && inDst.has(c.over) && inDst.has(c.under)) dst.crossings.push({ ...c });
+    }
+  }
+
+  if (parts.has('light')) dst.scene = structuredClone(src.scene);
+  if (parts.has('background')) dst.background = structuredClone(src.background);
+}

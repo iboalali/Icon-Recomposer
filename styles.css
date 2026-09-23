@@ -428,3 +428,9 @@ body.file-drag::after {
 .seg button + button { border-left: 1px solid var(--line-2); }
 .seg button.active { background: var(--accent-weak); color: var(--text); }
 .seg button:hover { color: var(--text); }
+.dlg.copy-dlg { width: min(94vw, 760px); }
+.copy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 0.6rem 0 0.8rem; }
+#copy-shape-parts, #copy-variant-parts, #copy-targets { display: flex; flex-direction: column; gap: 0.3rem; }
+#copy-shape-parts { margin-top: 0.35rem; padding-top: 0.45rem; border-top: 1px solid var(--line-2); }
+@media (max-width: 900px) { .copy-grid { grid-template-columns: 1fr; } }
+.insp-action { align-self: flex-start; }
