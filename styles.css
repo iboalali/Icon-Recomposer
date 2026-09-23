@@ -391,3 +391,17 @@ legend { color: var(--muted); font-size: 12px; padding: 0 0.3rem; }
 .shape-list li.group-head:hover { background: none; }
 .shape-list li.empty { cursor: default; }
 .stage-frame.no-bg { background: repeating-conic-gradient(#2a2f3a 0 25%, #1f232d 0 50%) 0 0 / 16px 16px; }
+body.file-drag::after {
+  content: "Drop a project file to open it";
+  position: fixed;
+  inset: 10px;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: 14px;
+  background: rgba(15, 17, 21, 0.72);
+  color: var(--text);
+  font-size: 16px;
+  pointer-events: none;
+}

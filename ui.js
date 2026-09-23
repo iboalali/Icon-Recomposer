@@ -15,11 +15,12 @@ import { createColorField } from './colorpicker.js';
 
 const STORAGE_KEY = 'icon-recomposer-2/doc';
 const EXPORT_PREFS_KEY = 'icon-recomposer-2/export';
+const UNSAVED_KEY = 'icon-recomposer-2/unsaved';
 const $ = (id) => document.getElementById(id);
 
 const state = {
   doc: loadStoredDocument(),
-  ui: { variant: 0, selected: null, editAll: false, guides: false, zoom: 4 },
+  ui: { variant: 0, selected: null, editAll: false, guides: false, zoom: 4, unsaved: loadUnsaved() },
 };
 const history = { undo: [], redo: [], pending: null };
 
@@ -29,6 +30,24 @@ function loadStoredDocument() {
     if (text) return M.parseProject(text);
   } catch { /* fall through to the sample */ }
   return M.sampleDocument();
+}
+
+// "Unsaved" means changed since the last Save, Open or New. The document itself
+// is always autosaved to the browser; this tracks whether a project file holds it.
+function loadUnsaved() {
+  try {
+    return localStorage.getItem(UNSAVED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setUnsaved(v) {
+  state.ui.unsaved = v;
+  try {
+    if (v) localStorage.setItem(UNSAVED_KEY, '1');
+    else localStorage.removeItem(UNSAVED_KEY);
+  } catch { /* storage unavailable */ }
 }
 
 function persist() {
@@ -61,6 +80,7 @@ function commit() {
     if (history.undo.length > 200) history.undo.shift();
     history.redo = [];
     history.pending = null;
+    setUnsaved(true);
     persist();
   }
   scheduleRender();
@@ -84,6 +104,7 @@ function restore(doc) {
   state.doc = doc;
   state.ui.variant = Math.min(state.ui.variant, doc.variants.length - 1);
   if (!selectedShape()) state.ui.selected = null;
+  setUnsaved(true);
   persist();
   scheduleRender();
 }
@@ -111,6 +132,7 @@ function loadDocument(doc) {
   history.undo = [];
   history.redo = [];
   history.pending = null;
+  setUnsaved(false);
   persist();
   scheduleRender();
 }
@@ -129,6 +151,7 @@ function scheduleRender() {
 }
 
 function render() {
+  document.title = `${state.ui.unsaved ? '• ' : ''}${state.doc.name || 'icon'} - Icon Recomposer`;
   if (document.activeElement !== $('doc-name')) $('doc-name').value = state.doc.name;
   $('btn-undo').disabled = !history.undo.length && !history.pending;
   $('btn-redo').disabled = !history.redo.length;
@@ -825,13 +848,18 @@ function toast(message, kind = '') {
   setTimeout(() => el.remove(), 3500);
 }
 
-async function newDocument() {
-  const ok = await confirmDialog({
-    title: 'Start a new icon?',
-    message: 'The current icon is replaced. Save it first if you want to keep it.',
-    confirmLabel: 'New icon',
+function confirmReplace(title, confirmLabel) {
+  if (!state.ui.unsaved) return Promise.resolve(true);
+  return confirmDialog({
+    title,
+    message: 'The current icon has changes that are not saved to a project file. They will be lost.',
+    confirmLabel,
+    danger: true,
   });
-  if (!ok) return;
+}
+
+async function newDocument() {
+  if (!(await confirmReplace('Start a new icon?', 'Discard and start new'))) return;
   const doc = M.newDocument();
   doc.variants[0].shapes.push(M.newShape('rect', { name: 'Plate', x: 16, y: 16, w: 76, h: 76, radius: 22 }));
   loadDocument(doc);
@@ -841,15 +869,50 @@ function saveProject() {
   commit();
   const blob = new Blob([M.serializeProject(state.doc)], { type: 'application/json' });
   download(blob, `${M.slug(state.doc.name)}.icjson`);
+  setUnsaved(false);
+  scheduleRender();
 }
 
 async function openFile(file) {
+  let doc;
   try {
-    loadDocument(M.parseProject(await file.text()));
-    toast(`Opened ${file.name}`);
+    doc = M.parseProject(await file.text());
   } catch (err) {
-    toast(err.message, 'error');
+    toast(`${file.name}: ${err.message}`, 'error');
+    return;
   }
+  if (!(await confirmReplace(`Open “${file.name}”?`, 'Discard and open'))) return;
+  loadDocument(doc);
+  toast(`Opened ${file.name}`);
+}
+
+function setupFileDrop() {
+  let depth = 0;
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  document.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    depth += 1;
+    document.body.classList.add('file-drag');
+  });
+  document.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (!depth) document.body.classList.remove('file-drag');
+  });
+  document.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  document.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    document.body.classList.remove('file-drag');
+    if (isDialogOpen() || !$('export-overlay').hidden) return;
+    const f = e.dataTransfer.files[0];
+    if (f) openFile(f);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,12 +1120,7 @@ async function init() {
   new ResizeObserver(fitStage).observe(box);
 
   document.addEventListener('keydown', onKey);
-  document.addEventListener('dragover', (e) => e.preventDefault());
-  document.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const f = e.dataTransfer?.files?.[0];
-    if (f) openFile(f);
-  });
+  setupFileDrop();
 
   setupExportDialog();
   fitStage();

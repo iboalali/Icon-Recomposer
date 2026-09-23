@@ -56,6 +56,7 @@ Version 2 is a rewrite. The 1.x app (gradient emboss that round-tripped to Vecto
 - One-way data flow: input → mutate `state.doc` → `scheduleRender()` (rAF-batched). Inspector controls are built once and only their values are updated on render.
 - Undo: `structuredClone` snapshots. `mutate()` is a live change inside a gesture, `commit()` ends the gesture and records one undo step, `edit()` is a one-shot change.
 - The document autosaves to `localStorage` on every commit. Export dialog settings are also remembered there.
+- `ui.unsaved` means "changed since the last Save, Open or New" (a `•` in the tab title). It is kept in `localStorage` too, so it survives a reload. Open (button or file drop) and New ask for confirmation only while it is set; a file is parsed before asking, so an invalid file never prompts.
 
 ## Changelog and versioning
 

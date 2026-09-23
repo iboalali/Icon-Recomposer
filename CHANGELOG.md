@@ -20,6 +20,7 @@ Version 2 is a complete rewrite. The app is now an editor for lit, layered icons
 - **PNG export** for the current or all variants: Play Store 512 px, legacy launcher icons at every density, adaptive icon foreground and background layers with the `mipmap-anydpi-v26` XML, and custom sizes. Optional circle, rounded square or squircle mask, launcher-view crop, and transparent background. Several files download as one zip, ready to drop into `res/`.
 - **Android guides** on the canvas for the launcher view and the safe zone.
 - Your work is saved in the browser automatically, and projects can be saved and opened as `.icjson` files.
+- **Drag and drop** a project file anywhere on the page to open it. If the current icon has changes that are not saved to a file, the app asks before replacing it, for Open and New as well. A `•` in the tab title marks unsaved changes.
 
 ### Removed
 
