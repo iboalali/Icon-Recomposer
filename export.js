@@ -95,7 +95,7 @@ function maskPath(mask, size) {
 async function captureSvg(variant, size, region, layer, transparent) {
   const css = (await iconCss()).replaceAll(']]>', ']]]]><![CDATA[>');
   const box = (REGIONS.find((r) => r.id === region) || REGIONS[0]).box;
-  const markup = stageMarkup(variant, { layer, transparent });
+  const markup = stageMarkup(variant, { layer, transparent, pxPerUnit: size / box[2] });
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="${box.join(' ')}">`
     + `<foreignObject x="0" y="0" width="${CANVAS}" height="${CANVAS}">`
     + `<div xmlns="http://www.w3.org/1999/xhtml"><style><![CDATA[${css}]]></style>${markup}</div>`

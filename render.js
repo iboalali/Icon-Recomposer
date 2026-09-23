@@ -78,7 +78,6 @@ export function iconSheet() {
   return sheetPromise;
 }
 
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 const num = (n) => +(+n).toFixed(3);
 
 // box-shadow offsets and the shiny gradient angle live in the element's own
@@ -101,8 +100,7 @@ function geometryCss(shape) {
   return css;
 }
 
-// extra: CSS appended to the element (and its glow), e.g. a crossing clip-path.
-// A copy (extra set) carries no data-id, so hit tests see only the original.
+// extra: CSS appended to the element and its glow, e.g. a crossing clip-path.
 function shapeMarkup(shape, scene, extra = '') {
   const st = shape.style;
   const classes = ['ir-shape', 'ambient'];
@@ -136,9 +134,8 @@ function shapeMarkup(shape, scene, extra = '') {
   if (st.glow && st.glowSize > 0) {
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
-  const id = extra ? '' : ` data-id="${esc(shape.id)}"`;
   const edge = st.chamfer || st.fillet ? '<div class="ir-edge"></div>' : '';
-  out += `<div class="${classes.join(' ')}"${id} style="${geo}${opacity}${vars}">${edge}</div>`;
+  out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars}">${edge}</div>`;
   return out;
 }
 
@@ -211,33 +208,85 @@ function clipPolygon(subject, clip) {
   return out;
 }
 
-const clipCss = (pts) => `clip-path:polygon(${pts.map(([x, y]) => `${num(x)}px ${num(y)}px`).join(',')});`;
-
-// How far a shape's drop shadow can reach past its outline (ambient.css's
-// outermost layer: offset + blur + spread, at the longest light component).
-function shadowReach(shape) {
-  const { elevation: e, thickness: k } = shape.style;
-  return e * 6.8 + k * 3.8 + e * 4.8 + k * 2.7 + 1;
-}
-
-// Puts `over` on top of `under` where they cross, with two copies of `over`
-// drawn right after `under`, each at its real position and clipped with a
-// clip-path (which also clips its shadow):
-// 1. to `under`'s outline: `over`'s body and its shadow on `under`;
-// 2. to `over`'s own outline within reach of `under`'s shadow: hides the
-//    shadow `under` casts onto `over`, without doubling `over`'s shadow on
-//    whatever lies around it.
-// Shapes that paint after `under` still cover both copies.
-function crossingMarkup(over, under, scene) {
-  const onUnder = clipCss(toBox(over, outline(under)));
-  const own = clipPolygon(outline(over), outline(under, shadowReach(under)));
-  let out = shapeMarkup(over, scene, onUnder);
-  if (own.length > 2) out += shapeMarkup(over, scene, clipCss(toBox(over, own)));
+// Moves every edge of a convex polygon (in outline()'s winding) inward by d.
+function insetPolygon(pts, d) {
+  const n = pts.length;
+  const lines = [];
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = pts[i];
+    const [bx, by] = pts[(i + 1) % n];
+    const len = Math.hypot(bx - ax, by - ay);
+    if (len < 1e-6) continue;
+    const nx = -(by - ay) / len;
+    const ny = (bx - ax) / len;
+    lines.push([ax + nx * d, ay + ny * d, bx - ax, by - ay]);
+  }
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const [px, py, dx, dy] = lines[(i + lines.length - 1) % lines.length];
+    const [qx, qy, ex, ey] = lines[i];
+    const den = dx * ey - dy * ex;
+    if (Math.abs(den) < 1e-9) {
+      out.push([qx, qy]);
+      continue;
+    }
+    const t = ((qx - px) * ey - (qy - py) * ex) / den;
+    out.push([px + dx * t, py + dy * t]);
+  }
   return out;
 }
 
+const clipCss = (pts) => `clip-path:polygon(${pts.map(([x, y]) => `${num(x)}px ${num(y)}px`).join(',')});`;
+
+// How far a shape's paint can reach past its outline: ambient.css's outermost
+// drop-shadow layer (offset + blur + spread at the longest light component),
+// plus its glow.
+function inkReach(shape) {
+  const { elevation: e, thickness: k, glow, glowSize } = shape.style;
+  return e * 6.8 + k * 3.8 + e * 4.8 + k * 2.7 + 1 + (glow ? glowSize * 1.4 : 0) + 2;
+}
+
+const ring = (pts) => `M${pts.map(([x, y]) => `${num(x)} ${num(y)}`).join('L')}Z`;
+
+// Where `over` crosses `under` against the paint order, `over` is put on top
+// without painting anything twice, so translucent shapes (glass, opacity) look
+// the same as at a natural crossing:
+// - a copy of `over`, drawn right after `under` and clipped to `under`'s
+//   outline, shows `over`'s body and its shadow on `under` (overCopy);
+// - `under` gets a hole where `over` lies outside it, so `under`'s shadow
+//   never lands on `over`; the even-odd rule keeps `under`'s body where they
+//   overlap;
+// - the original `over` gets a hole where they overlap, which the copy covers.
+// Shapes that paint after `under` still cover all of it.
+function overCopy(over, under, scene) {
+  return shapeMarkup(over, scene, clipCss(toBox(over, outline(under))));
+}
+
+// Holes are inset by `overlap` canvas units (about 1.25 output pixels) so that
+// the shape on the other side of a hole edge still paints across it. Two
+// anti-aliased edges meeting exactly would let the background show through as
+// a hairline.
+// holes: { over: shapes drawn over this one, under: shapes this one is drawn over }
+function crossingClip(shape, holes, overlap) {
+  const pad = inkReach(shape);
+  let d = ring([[-pad, -pad], [shape.w + pad, -pad], [shape.w + pad, shape.h + pad], [-pad, shape.h + pad]]);
+  for (const over of holes.over) {
+    const hole = insetPolygon(outline(over), overlap);
+    d += ring(toBox(shape, hole));
+    const shared = clipPolygon(hole, outline(shape));
+    if (shared.length > 2) d += ring(toBox(shape, shared));
+  }
+  for (const under of holes.under) {
+    const shared = clipPolygon(outline(shape), outline(under));
+    if (shared.length > 2) d += ring(toBox(shape, insetPolygon(shared, overlap)));
+  }
+  return `clip-path:path(evenodd,'${d}');`;
+}
+
 // layer: 'all' (the composite), 'foreground' (no background) or 'background'.
-export function stageMarkup(variant, { layer = 'all', transparent = false } = {}) {
+// pxPerUnit: output pixels per canvas unit, which sizes the crossing seam overlap.
+export function stageMarkup(variant, { layer = 'all', transparent = false, pxPerUnit = 4 } = {}) {
+  const overlap = 1.25 / pxPerUnit;
   const sc = variant.scene;
   const bg = variant.background;
   let style = [
@@ -256,6 +305,7 @@ export function stageMarkup(variant, { layer = 'all', transparent = false } = {}
   const byId = new Map(ordered.map((s) => [s.id, s]));
   const drawn = (s) => s && !s.hidden && (layer === 'all' || s.layer === layer);
   const patches = new Map();
+  const coveredBy = new Map();
   for (const cr of variant.crossings || []) {
     const over = byId.get(cr.over);
     const under = byId.get(cr.under);
@@ -263,13 +313,17 @@ export function stageMarkup(variant, { layer = 'all', transparent = false } = {}
     if (rank.get(over.id) > rank.get(under.id)) continue; // already on top
     if (!patches.has(under.id)) patches.set(under.id, []);
     patches.get(under.id).push(over);
+    if (!coveredBy.has(over.id)) coveredBy.set(over.id, []);
+    coveredBy.get(over.id).push(under);
   }
   const shapes = ordered
     .filter(drawn)
-    .map((s) => shapeMarkup(s, sc) + (patches.get(s.id) || [])
-      .sort((a, b) => rank.get(a.id) - rank.get(b.id))
-      .map((o) => crossingMarkup(o, s, sc))
-      .join(''))
+    .map((s) => {
+      const overs = (patches.get(s.id) || []).sort((a, b) => rank.get(a.id) - rank.get(b.id));
+      const unders = coveredBy.get(s.id) || [];
+      const clip = overs.length || unders.length ? crossingClip(s, { over: overs, under: unders }, overlap) : '';
+      return shapeMarkup(s, sc, clip) + overs.map((o) => overCopy(o, s, sc)).join('');
+    })
     .join('');
   return `<div class="ir-stage" style="${style}">${shapes}</div>`;
 }

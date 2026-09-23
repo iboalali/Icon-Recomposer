@@ -201,7 +201,7 @@ function mountIcon(host) {
 }
 
 function renderStage() {
-  stageRoot.innerHTML = stageMarkup(variant());
+  stageRoot.innerHTML = stageMarkup(variant(), { pxPerUnit: state.ui.zoom * devicePixelRatio });
   $('stage-frame').classList.toggle('no-bg', variant().background.transparent);
   $('guides').hidden = !state.ui.guides;
 }
@@ -214,7 +214,7 @@ function fitStage() {
   $('stage-host').style.zoom = state.ui.zoom;
   $('stage-frame').style.width = `${px}px`;
   $('stage-frame').style.height = `${px}px`;
-  renderSelection();
+  scheduleRender();
 }
 
 function renderSelection() {
@@ -612,7 +612,7 @@ function renderVariants() {
       t = { card, root: mountIcon(inner), name, markup: '' };
       thumbs.set(v.id, t);
     }
-    const markup = stageMarkup(v);
+    const markup = stageMarkup(v, { pxPerUnit: (86 / M.CANVAS) * devicePixelRatio });
     if (markup !== t.markup) {
       t.root.innerHTML = markup;
       t.markup = markup;
