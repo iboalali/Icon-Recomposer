@@ -1,299 +1,264 @@
-// model.js — the authoring model: defaults, sample doc, validation/migration,
-// and the project-file / share-link serialization (PLAN §4, §8).
+// model.js: the document, a list of variants each holding a scene and a stack of shapes.
 //
-// The authoring model is what the user manipulates: ONE shared scene light plus
-// a layers[] array, each layer a pathData + material. derive() turns this into
-// the flat derived model that all three renderers consume.
+// Each shape sits on the adaptive icon's foreground or background layer, and
+// background shapes always paint under foreground ones (paintOrder), as on a
+// launcher. Within a layer, array order is paint order.
+//
+// A variant is a complete, independent copy of the design. Shapes keep the same
+// id across variants, so "edit all variants" can find the matching shape in
+// each one. Coordinates are in canvas units: the icon canvas is CANVAS x CANVAS,
+// the Android adaptive-icon 108dp grid.
 
-export const SCHEMA_VERSION = 2;
-export const APP_VERSION = '1.8.0';
-export const FORMAT_ID = 'icon-emboss';
+export const APP_VERSION = '2.0.0-alpha.1';
+export const SCHEMA_VERSION = 1;
+export const FORMAT = 'icon-recomposer/2';
+export const CANVAS = 108;
+
+export const MATERIALS = [
+  { id: 'matte', label: 'Matte' },
+  { id: 'shiny', label: 'Shiny' },
+  { id: 'glass', label: 'Frosted glass' },
+  { id: 'brushed', label: 'Brushed metal' },
+  { id: 'brushed-round', label: 'Brushed (radial)' },
+  { id: 'blasted', label: 'Blasted' },
+];
+
+export const LAYERS = [
+  { id: 'foreground', label: 'Foreground' },
+  { id: 'background', label: 'Background' },
+];
+
+export const SURFACES = [
+  { id: 'flat', label: 'Flat' },
+  { id: 'concave', label: 'Concave (vertical)' },
+  { id: 'concave-h', label: 'Concave (horizontal)' },
+  { id: 'convex', label: 'Convex' },
+  { id: 'groove', label: 'Groove (recessed)' },
+];
 
 let idCounter = 0;
-// Per-load random base so generated ids never collide with ids already present
-// in a loaded/imported project. The counter alone resets to 0 each page load,
-// so without this it would regenerate ids an opened document already holds
-// (e.g. importing into the default project produced two "layer-3-7283" layers).
-const idBase = Math.floor(Math.random() * 0x7fffffff).toString(36);
-export function newId(prefix = 'layer') {
+export function newId(prefix) {
   idCounter += 1;
-  return `${prefix}-${idBase}-${idCounter}`;
+  return `${prefix}${Date.now().toString(36)}${idCounter.toString(36)}`;
 }
 
-// ---- defaults ----
-export function defaultLight() {
+export function defaultScene() {
   return {
-    type: 'point', // point | distant
-    position: { x: 38, y: 30 }, // point light: viewport coords (= radial center)
-    azimuth: 135, // distant light: direction light comes FROM (deg, cw from top)
-    elevation: 55, // 0 = grazing/long shadow, 90 = overhead/flat
-    intensity: 1.0,
-    color: '#ffffff',
+    lightX: -1,
+    lightY: -1,
+    key: 0.9,
+    fill: 0.7,
+    hue: 234,
+    saturation: 15,
   };
 }
 
-export function defaultMaterial(baseColor = '#3b82f6') {
+export function defaultBackground() {
+  return { color: '#e8e9ee', lit: true, transparent: false };
+}
+
+export function defaultStyle() {
   return {
-    baseColor,
-    fillAlpha: 1,
-    fillMode: 'solid', // solid | embossed | gradient — emboss is opt-in, not default
-    embossIntensity: 1.0,
-    sheen: { enabled: false, strength: 0.35 },
-    stroke: null, // { color, width, cap, join } — passthrough, un-embossed
-    fillNone: false, // stroke-only layer
-    gradient: null, // user gradient fill (fillMode 'gradient'); see normalizeGradient
+    color: '#3b6fd8',
+    shade: 1,
+    opacity: 1,
+    material: 'matte',
+    surface: 'flat',
+    elevation: 1,
+    thickness: 1,
+    chamfer: false,
+    chamferWidth: 1,
+    fillet: true,
+    filletWidth: 1,
+    curveScale: 1,
+    grain: 1,
+    glow: false,
+    glowColor: '#7fd6ff',
+    glowSize: 6,
   };
 }
 
-// A user gradient fill. Geometry is in the layer's local (pathData) space so
-// derive() bakes it with the same transform as the path. Stops carry color +
-// alpha separately (per-stop transparency). Linear uses x1/y1/x2/y2; radial
-// uses cx/cy/r. Returns null if there aren't at least two usable stops.
-export function defaultGradient(baseColor = '#3b82f6', box = null) {
-  const b = box || { minX: 0, minY: 0, maxX: 100, maxY: 100, cx: 50, cy: 50, w: 100, h: 100 };
+export function newShape(kind = 'rect', over = {}) {
+  const size = kind === 'ellipse' ? 48 : 64;
   return {
-    type: 'linear',
-    x1: b.minX, y1: b.cy, x2: b.maxX, y2: b.cy,
-    cx: b.cx, cy: b.cy, r: 0.5 * Math.max(b.w, b.h) || 50,
-    stops: [
-      { offset: 0, color: baseColor.slice(0, 7), alpha: 1 },
-      { offset: 1, color: '#ffffff', alpha: 1 },
-    ],
+    id: newId('s'),
+    name: kind === 'ellipse' ? 'Circle' : 'Rectangle',
+    kind,
+    x: (CANVAS - size) / 2,
+    y: (CANVAS - size) / 2,
+    w: size,
+    h: size,
+    radius: kind === 'ellipse' ? 0 : 16,
+    rotation: 0,
+    hidden: false,
+    layer: 'foreground',
+    style: defaultStyle(),
+    ...over,
   };
 }
 
-function normalizeGradient(g) {
-  if (!g || typeof g !== 'object') return null;
-  const num = (v, d) => (isFinite(+v) ? +v : d);
-  const stopsIn = Array.isArray(g.stops) ? g.stops : [];
-  const stops = stopsIn
-    .map((s) => ({
-      offset: Math.min(1, Math.max(0, num(s && s.offset, 0))),
-      color: (s && typeof s.color === 'string' ? s.color : '#000000').slice(0, 7),
-      alpha: Math.min(1, Math.max(0, num(s && s.alpha, 1))),
-    }))
-    .sort((a, b) => a.offset - b.offset);
-  if (stops.length < 2) return null;
+export function newVariant(name = 'Variant 1') {
   return {
-    type: g.type === 'radial' ? 'radial' : 'linear',
-    x1: num(g.x1, 0), y1: num(g.y1, 0), x2: num(g.x2, 100), y2: num(g.y2, 0),
-    cx: num(g.cx, 50), cy: num(g.cy, 50), r: num(g.r, 50),
-    stops,
+    id: newId('v'),
+    name,
+    scene: defaultScene(),
+    background: defaultBackground(),
+    shapes: [],
   };
 }
 
-export function defaultLayer(opts = {}) {
+export function newDocument() {
   return {
-    id: opts.id || newId(),
-    name: opts.name || 'Layer',
-    visible: opts.visible !== false,
-    pathData: opts.pathData || '',
-    fillRule: opts.fillRule || 'nonZero', // nonZero | evenOdd
-    material: opts.material || defaultMaterial(),
-    castsShadow: opts.castsShadow || { enabled: false, opacity: 0.35, spread: 0.4, distance: 1, clipToLayers: true },
-    transform: opts.transform || null, // reserved (import bakes transforms)
-  };
-}
-
-export function defaultCanvas() {
-  return {
-    width: 108,
-    height: 108,
-    viewportWidth: 108,
-    viewportHeight: 108,
-    exportBackground: { transparent: true, color: '#ffffff' },
-    pngSize: 1024,
-  };
-}
-
-// ---- rounded-rect path helper (for the sample doc) ----
-export function roundedRectPath(x, y, w, h, r) {
-  r = Math.min(r, w / 2, h / 2);
-  const k = 0.5522847498 * r; // circle→bézier constant
-  const x2 = x + w;
-  const y2 = y + h;
-  return (
-    `M${x + r} ${y}` +
-    `L${x2 - r} ${y}` +
-    `C${x2 - r + k} ${y} ${x2} ${y + r - k} ${x2} ${y + r}` +
-    `L${x2} ${y2 - r}` +
-    `C${x2} ${y2 - r + k} ${x2 - r + k} ${y2} ${x2 - r} ${y2}` +
-    `L${x + r} ${y2}` +
-    `C${x + r - k} ${y2} ${x} ${y2 - r + k} ${x} ${y2 - r}` +
-    `L${x} ${y + r}` +
-    `C${x} ${y + r - k} ${x + r - k} ${y} ${x + r} ${y}` +
-    `Z`
-  );
-}
-
-// ---- sample document (the spine: PLAN §10 step 1) ----
-// A rounded plate + a play triangle — recognizable and exercises emboss/shadow.
-export function sampleDocument() {
-  const plate = defaultLayer({
-    name: 'Plate',
-    pathData: roundedRectPath(8, 8, 92, 92, 24),
-    material: defaultMaterial('#2563eb'),
-  });
-  plate.material.fillMode = 'embossed';
-  plate.material.embossIntensity = 1.0;
-  plate.material.sheen = { enabled: true, strength: 0.3 };
-  plate.castsShadow = { enabled: true, opacity: 0.4, spread: 0.5, distance: 1, clipToLayers: true };
-
-  const glyph = defaultLayer({
-    name: 'Glyph',
-    pathData: 'M44 38 L74 54 L44 70 Z',
-    material: defaultMaterial('#eff6ff'),
-  });
-  glyph.material.fillMode = 'embossed';
-  glyph.material.embossIntensity = 0.8;
-  glyph.castsShadow = { enabled: true, opacity: 0.3, spread: 0.35, distance: 1.6, clipToLayers: true };
-
-  return {
-    canvas: defaultCanvas(),
-    light: defaultLight(),
-    layers: [plate, glyph],
-  };
-}
-
-// ---- validation / migration ----
-// Coerce an arbitrary parsed object into a valid document, filling defaults for
-// missing fields and dropping unknowns. Tolerant on purpose (PLAN §8).
-export function normalizeDocument(input) {
-  const doc = input && typeof input === 'object' ? input : {};
-  const canvas = Object.assign(defaultCanvas(), doc.canvas || {});
-  canvas.exportBackground = Object.assign(
-    { transparent: true, color: '#ffffff' },
-    (doc.canvas && doc.canvas.exportBackground) || {}
-  );
-
-  const light = Object.assign(defaultLight(), doc.light || {});
-  light.position = Object.assign({ x: canvas.viewportWidth / 2, y: canvas.viewportHeight / 2 }, light.position || {});
-
-  const layers = Array.isArray(doc.layers) ? doc.layers.map(normalizeLayer) : [];
-
-  // Guarantee unique layer ids — a missing or duplicate id would make selection
-  // (which filters layers by id) match more than one layer. Repairs documents
-  // saved while the id-collision bug was present; keeps the first occurrence.
-  const seenIds = new Set();
-  for (const l of layers) {
-    if (!l.id || seenIds.has(l.id)) l.id = newId();
-    seenIds.add(l.id);
-  }
-
-  return { canvas, light, layers };
-}
-
-// Coerce a (possibly hand-edited) transform into all-numeric fields, or null.
-// translateX/Y is now user-writable (move-layer), so guard against NaN/strings
-// that would poison the affine matrix in derive().
-function normalizeTransform(t) {
-  if (!t || typeof t !== 'object') return null;
-  const n = (v, d) => (isFinite(+v) ? +v : d);
-  return {
-    translateX: n(t.translateX, 0),
-    translateY: n(t.translateY, 0),
-    rotation: n(t.rotation, 0),
-    scaleX: n(t.scaleX, 1),
-    scaleY: n(t.scaleY, 1),
-    pivotX: n(t.pivotX, 0),
-    pivotY: n(t.pivotY, 0),
-  };
-}
-
-function normalizeLayer(input) {
-  const l = input && typeof input === 'object' ? input : {};
-  const layer = defaultLayer({
-    id: l.id,
-    name: l.name,
-    visible: l.visible,
-    pathData: l.pathData,
-    fillRule: l.fillRule === 'evenOdd' ? 'evenOdd' : 'nonZero',
-    transform: normalizeTransform(l.transform),
-  });
-  const m = l.material || {};
-  const fillMode = m.fillMode === 'embossed' || m.fillMode === 'gradient' ? m.fillMode : 'solid';
-  layer.material = Object.assign(defaultMaterial(), {
-    baseColor: m.baseColor || '#3b82f6',
-    fillAlpha: m.fillAlpha == null ? 1 : m.fillAlpha,
-    fillMode,
-    embossIntensity: m.embossIntensity == null ? 1 : m.embossIntensity,
-    sheen: Object.assign({ enabled: false, strength: 0.35 }, m.sheen || {}),
-    stroke: m.stroke || null,
-    fillNone: !!m.fillNone,
-    gradient: normalizeGradient(m.gradient),
-  });
-  layer.castsShadow = Object.assign({ enabled: false, opacity: 0.35, spread: 0.4, distance: 1, clipToLayers: true }, l.castsShadow || {});
-  return layer;
-}
-
-// Migrate a parsed project payload from its schemaVersion up to current.
-function migrate(payload) {
-  let v = payload.schemaVersion || 1;
-  // v1 → v2: added optional material.gradient + fillMode 'gradient'. Purely
-  // additive — normalizeLayer fills `gradient: null` for old docs, so no
-  // structural transform is needed here.
-  if (v < 2) v = 2;
-  return payload.document;
-}
-
-// ---- project file (save / open) ----
-export function wrapProject(document, name = 'icon') {
-  return {
-    format: FORMAT_ID,
+    format: FORMAT,
     schemaVersion: SCHEMA_VERSION,
     app: APP_VERSION,
-    name,
-    document,
+    name: 'icon',
+    variants: [newVariant()],
   };
 }
 
-export function serializeProject(document, name) {
-  return JSON.stringify(wrapProject(document, name), null, 2);
+export function sampleDocument() {
+  const doc = newDocument();
+  const v = doc.variants[0];
+  v.name = 'Blue';
+  const plate = newShape('rect', {
+    name: 'Plate', x: 16, y: 16, w: 76, h: 76, radius: 22,
+    style: { ...defaultStyle(), color: '#2f6fe0', elevation: 2, thickness: 1, fillet: true },
+  });
+  const ring = newShape('ellipse', {
+    name: 'Ring', x: 34, y: 34, w: 40, h: 40,
+    style: { ...defaultStyle(), color: '#f5b400', material: 'shiny', elevation: 1, chamfer: true, fillet: false },
+  });
+  const dot = newShape('ellipse', {
+    name: 'Dot', x: 46, y: 46, w: 16, h: 16,
+    style: { ...defaultStyle(), color: '#eeeeee', surface: 'concave', elevation: 0, fillet: false },
+  });
+  v.shapes.push(plate, ring, dot);
+
+  const green = duplicateVariant(v, 'Green');
+  green.shapes[0].style.color = '#1f9d63';
+  green.shapes[1].style.color = '#f2f2f2';
+  const dark = duplicateVariant(v, 'Night');
+  dark.background.color = '#23262f';
+  dark.scene = { ...dark.scene, key: 0.55, fill: 0.35, hue: 220, saturation: 30 };
+  doc.variants.push(green, dark);
+  return doc;
 }
 
-// Returns { ok, document, name } or { ok:false, error }.
+export function duplicateVariant(variant, name) {
+  const copy = structuredClone(variant);
+  copy.id = newId('v');
+  copy.name = name || `${variant.name} copy`;
+  return copy;
+}
+
+const clamp = (v, lo, hi, d) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d;
+};
+const pick = (v, list, d) => (list.some((o) => o.id === v) ? v : d);
+const hex = (v, d) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : d);
+
+function normalizeStyle(s = {}) {
+  const d = defaultStyle();
+  return {
+    color: hex(s.color, d.color),
+    shade: clamp(s.shade, 0, 2, d.shade),
+    opacity: clamp(s.opacity, 0, 1, d.opacity),
+    material: pick(s.material, MATERIALS, d.material),
+    surface: pick(s.surface, SURFACES, d.surface),
+    elevation: clamp(s.elevation, 0, 3, d.elevation),
+    thickness: clamp(s.thickness, 0, 2, d.thickness),
+    chamfer: !!s.chamfer,
+    chamferWidth: clamp(s.chamferWidth, -2, 2, d.chamferWidth),
+    fillet: s.fillet === undefined ? d.fillet : !!s.fillet,
+    filletWidth: clamp(s.filletWidth, -2, 2, d.filletWidth),
+    curveScale: clamp(s.curveScale, 0, 4, d.curveScale),
+    grain: clamp(s.grain, 0, 3, d.grain),
+    glow: !!s.glow,
+    glowColor: hex(s.glowColor, d.glowColor),
+    glowSize: clamp(s.glowSize, 0, 30, d.glowSize),
+  };
+}
+
+function normalizeShape(s = {}) {
+  const kind = s.kind === 'ellipse' ? 'ellipse' : 'rect';
+  const base = newShape(kind);
+  return {
+    id: typeof s.id === 'string' && s.id ? s.id : base.id,
+    name: typeof s.name === 'string' && s.name ? s.name : base.name,
+    kind,
+    x: clamp(s.x, -CANVAS, CANVAS * 2, base.x),
+    y: clamp(s.y, -CANVAS, CANVAS * 2, base.y),
+    w: clamp(s.w, 1, CANVAS * 3, base.w),
+    h: clamp(s.h, 1, CANVAS * 3, base.h),
+    radius: clamp(s.radius, 0, CANVAS * 1.5, base.radius),
+    rotation: clamp(s.rotation, -360, 360, 0),
+    hidden: !!s.hidden,
+    layer: pick(s.layer, LAYERS, 'foreground'),
+    style: normalizeStyle(s.style),
+  };
+}
+
+function normalizeVariant(v = {}, i = 0) {
+  const sc = v.scene || {};
+  const ds = defaultScene();
+  const bg = v.background || {};
+  const db = defaultBackground();
+  return {
+    id: typeof v.id === 'string' && v.id ? v.id : newId('v'),
+    name: typeof v.name === 'string' && v.name ? v.name : `Variant ${i + 1}`,
+    scene: {
+      lightX: clamp(sc.lightX, -1, 1, ds.lightX),
+      lightY: clamp(sc.lightY, -1, 1, ds.lightY),
+      key: clamp(sc.key, 0, 1, ds.key),
+      fill: clamp(sc.fill, 0, 1, ds.fill),
+      hue: clamp(sc.hue, 0, 360, ds.hue),
+      saturation: clamp(sc.saturation, 0, 100, ds.saturation),
+    },
+    background: {
+      color: hex(bg.color, db.color),
+      lit: bg.lit === undefined ? db.lit : !!bg.lit,
+      transparent: !!bg.transparent,
+    },
+    shapes: Array.isArray(v.shapes) ? v.shapes.map(normalizeShape) : [],
+  };
+}
+
+// Throws with a readable message when the JSON is not a project of this app.
 export function parseProject(text) {
-  let payload;
+  let data;
   try {
-    payload = JSON.parse(text);
-  } catch (e) {
-    return { ok: false, error: 'Not valid JSON.' };
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('The file is not valid JSON.');
   }
-  if (!payload || payload.format !== FORMAT_ID) {
-    return { ok: false, error: `Not an Icon Recomposer project (format "${payload && payload.format}").` };
+  if (!data || data.format !== FORMAT) {
+    if (data && Array.isArray(data.layers)) {
+      throw new Error('This is a project from Icon Recomposer 1.x, which this version cannot open.');
+    }
+    throw new Error('The file is not an Icon Recomposer project.');
   }
-  if ((payload.schemaVersion || 1) > SCHEMA_VERSION) {
-    return { ok: false, error: `Project is from a newer version (schema ${payload.schemaVersion}).` };
-  }
-  const rawDoc = migrate(payload);
-  return { ok: true, document: normalizeDocument(rawDoc), name: payload.name || 'icon' };
+  const variants = Array.isArray(data.variants) && data.variants.length
+    ? data.variants.map(normalizeVariant)
+    : [newVariant()];
+  return {
+    format: FORMAT,
+    schemaVersion: SCHEMA_VERSION,
+    app: APP_VERSION,
+    name: typeof data.name === 'string' && data.name ? data.name : 'icon',
+    variants,
+  };
 }
 
-// ---- share-by-link (URL fragment, no backend; PLAN §8) ----
-function toB64Url(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-function fromB64Url(b64) {
-  let s = b64.replace(/-/g, '+').replace(/_/g, '/');
-  while (s.length % 4) s += '=';
-  const bin = atob(s);
-  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
+export function serializeProject(doc) {
+  return JSON.stringify({ ...doc, app: APP_VERSION, schemaVersion: SCHEMA_VERSION }, null, 2);
 }
 
-export function encodeShareFragment(document, name) {
-  return 'doc=' + toB64Url(JSON.stringify(wrapProject(document, name)));
+export function slug(s) {
+  return String(s || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'icon';
 }
 
-export function decodeShareFragment(hash) {
-  const m = /(?:^#?|&)doc=([^&]+)/.exec(hash || '');
-  if (!m) return null;
-  try {
-    return parseProject(fromB64Url(m[1]));
-  } catch (e) {
-    return { ok: false, error: 'Share link is corrupt.' };
-  }
+export function paintOrder(shapes) {
+  return [...shapes.filter((s) => s.layer === 'background'), ...shapes.filter((s) => s.layer !== 'background')];
 }

@@ -1,2070 +1,1075 @@
-// ui.js — panels, controlled inputs, draggable light handle, render loop,
-// undo/redo, and file/export wiring (PLAN §6, §15).
+// ui.js: the editor. State, undo, inspector, canvas interaction, variants,
+// file handling and the export dialog.
 //
-// One-way data flow: input → mutate state → render(). Two kinds of DOM:
-//   - derived views (preview SVG, layer list): rebuilt from state each render.
-//   - controlled inputs (in index.html): built ONCE; render only updates .value
-//     (never recreates them — that would kill focus/drag/color-pickers).
+// Data flow is one-way: input → mutate state.doc → scheduleRender(). Inspector
+// controls are built once and only their values are updated on render, so a
+// control being dragged or typed in keeps focus.
 
-import { derive, bakedOutline } from './derive.js';
-import * as P from './path.js';
-import { previewSvg, standaloneSvg } from './svg.js';
-import { exportVD } from './export-vd.js';
-import { renderPng } from './export-png.js';
-import { importVector } from './import.js';
-import { createColorField } from './colorpicker.js';
-import { confirmDialog, isDialogOpen } from './dialog.js';
-import { parseColor, mix, toHex, WHITE, BLACK } from './color.js';
-import { signal as tdSignal, reportError as tdError } from './telemetry.js';
+import * as M from './model.js';
+import { iconSheet, stageMarkup } from './render.js';
 import {
-  APP_VERSION,
-  newId,
-  sampleDocument,
-  defaultCanvas,
-  defaultLight,
-  defaultGradient,
-  normalizeDocument,
-  serializeProject,
-  parseProject,
-  encodeShareFragment,
-  decodeShareFragment,
-} from './model.js';
+  PRESETS, REGIONS, MASKS, parseCustomSizes, planExport, runExport, renderCanvas, download,
+} from './export.js';
+import { confirmDialog, isDialogOpen } from './dialog.js';
+import { createColorField } from './colorpicker.js';
 
-const DEG = Math.PI / 180;
+const STORAGE_KEY = 'icon-recomposer-2/doc';
+const EXPORT_PREFS_KEY = 'icon-recomposer-2/export';
 const $ = (id) => document.getElementById(id);
 
-// ---- state ----
-const appState = {
-  document: sampleDocument(),
-  ui: {
-    selectedLayerIds: [], primaryLayerId: null, selectAnchorId: null,
-    projectName: 'icon', scaleLinked: true,
-    // View-only zoom/pan of the canvas (ephemeral; never saved/exported).
-    // scale 1 = fit; panX/panY are screen px applied as a CSS transform.
-    view: { scale: 1, panX: 0, panY: 0 },
-  },
+const state = {
+  doc: loadStoredDocument(),
+  ui: { variant: 0, selected: null, editAll: false, guides: false, zoom: 4 },
 };
-const undoStack = [];
-const redoStack = [];
-let gestureSnapshot = null;
+const history = { undo: [], redo: [], pending: null };
 
-// ---- file binding (File System Access API) ----
-// The on-disk file the document is bound to: Save overwrites it and the watcher
-// polls it. null when the document came from upload / default / session / share
-// link (Save then falls back to a download). Watching is opt-in and the first
-// in-app edit stops it (see commit/commitGesture). All of this is progressive
-// enhancement — on browsers without the API the bindings stay null and the
-// related buttons stay hidden.
-let currentHandle = null;
-let watchTimer = null; // setInterval id while watching external edits
-let watchLastMod = 0; // last-seen file.lastModified, to detect external changes
-let watchPolling = false; // re-entrancy guard for the async poll tick
-const WATCH_MS = 700;
-const canPick = 'showOpenFilePicker' in window; // Chromium open/save pickers
-const fsaSupported = canPick || 'launchQueue' in window;
-
-// Custom color-popover fields (created once in wireControls).
-let matColorField = null;
-let bgColorField = null;
-let strokeColorField = null;
-let gradFromField = null; // simple gradient: first stop's color
-let gradToField = null; //   simple gradient: last stop's color
-
-const doc = () => appState.document;
-// Selection is a set of layer ids; the "primary" (last-clicked) layer's values
-// populate the inspector, while edits apply to every selected layer.
-const selectedLayers = () => doc().layers.filter((l) => appState.ui.selectedLayerIds.includes(l.id));
-const primaryLayer = () =>
-  doc().layers.find((l) => l.id === appState.ui.primaryLayerId) ||
-  doc().layers.find((l) => appState.ui.selectedLayerIds.includes(l.id)) ||
-  null;
-
-// ---- session persistence ----
-// Auto-save the current document to localStorage so work is restored on reopen.
-const SESSION_KEY = 'icon-recomposer:session';
-
-// Persist the current document (document + name only; selection and zoom/pan are
-// ephemeral by design). Best-effort: storage can be full or disabled (private
-// mode) — never let a save failure break an edit.
-function saveSession() {
+function loadStoredDocument() {
   try {
-    localStorage.setItem(SESSION_KEY, serializeProject(appState.document, appState.ui.projectName));
-  } catch (_) { /* quota exceeded / storage disabled — ignore */ }
+    const text = localStorage.getItem(STORAGE_KEY);
+    if (text) return M.parseProject(text);
+  } catch { /* fall through to the sample */ }
+  return M.sampleDocument();
 }
 
-// Load a previously-saved session, or null if none/invalid. Reuses parseProject,
-// which validates format, rejects newer schema, migrates v1→v2, and normalizes.
-function loadSession() {
-  let text;
-  try { text = localStorage.getItem(SESSION_KEY); } catch (_) { return null; }
-  if (!text) return null;
-  const res = parseProject(text);
-  if (!res.ok) {
-    try { localStorage.removeItem(SESSION_KEY); } catch (_) {} // drop corrupt entry
-    return null;
-  }
-  return res; // { ok, document, name }
+function persist() {
+  try {
+    localStorage.setItem(STORAGE_KEY, M.serializeProject(state.doc));
+  } catch { /* storage unavailable: the session still works */ }
 }
 
-// ---- undo/redo ----
-function snapshot() {
-  return structuredClone(doc());
-}
-function beginGesture() {
-  if (!gestureSnapshot) gestureSnapshot = snapshot();
-}
-function commitGesture() {
-  if (gestureSnapshot) {
-    if (watchTimer) stopWatch('edited'); // an in-app edit stops external watching
-    undoStack.push(gestureSnapshot);
-    gestureSnapshot = null;
-    redoStack.length = 0;
-    capStack(undoStack);
-    updateHistoryButtons();
-    saveSession();
+// ---------------------------------------------------------------------------
+// state helpers
+
+const variant = () => state.doc.variants[state.ui.variant];
+const selectedShape = () => variant().shapes.find((s) => s.id === state.ui.selected) || null;
+const targets = () => (state.ui.editAll ? state.doc.variants : [variant()]);
+
+function forShape(id, fn) {
+  for (const v of targets()) {
+    const s = v.shapes.find((x) => x.id === id);
+    if (s) fn(s, v);
   }
 }
-// Discrete (atomic) change: snapshot, mutate, push.
-function commit(mutate) {
-  if (watchTimer) stopWatch('edited'); // an in-app edit stops external watching
-  const snap = snapshot();
-  mutate();
-  undoStack.push(snap);
-  redoStack.length = 0;
-  capStack(undoStack);
-  updateHistoryButtons();
-  saveSession();
+
+function begin() {
+  if (!history.pending) history.pending = structuredClone(state.doc);
+}
+
+function commit() {
+  if (history.pending) {
+    history.undo.push(history.pending);
+    if (history.undo.length > 200) history.undo.shift();
+    history.redo = [];
+    history.pending = null;
+    persist();
+  }
   scheduleRender();
 }
-function capStack(stack) {
-  while (stack.length > 100) stack.shift();
+
+// A live change inside a gesture (slider drag, canvas drag). commit() ends it.
+function mutate(fn) {
+  begin();
+  fn();
+  scheduleRender();
 }
+
+// A one-shot change: its own undo step.
+function edit(fn) {
+  begin();
+  fn();
+  commit();
+}
+
+function restore(doc) {
+  state.doc = doc;
+  state.ui.variant = Math.min(state.ui.variant, doc.variants.length - 1);
+  if (!selectedShape()) state.ui.selected = null;
+  persist();
+  scheduleRender();
+}
+
 function undo() {
-  if (!undoStack.length) return;
-  redoStack.push(snapshot());
-  appState.document = undoStack.pop();
-  reconcileSelection();
-  updateHistoryButtons();
-  saveSession();
-  scheduleRender();
-  tdSignal('undo');
-}
-function redo() {
-  if (!redoStack.length) return;
-  undoStack.push(snapshot());
-  appState.document = redoStack.pop();
-  reconcileSelection();
-  updateHistoryButtons();
-  saveSession();
-  scheduleRender();
-  tdSignal('redo');
-}
-function reconcileSelection() {
-  const ids = doc().layers.map((l) => l.id);
-  appState.ui.selectedLayerIds = appState.ui.selectedLayerIds.filter((id) => ids.includes(id));
-  if (!ids.includes(appState.ui.primaryLayerId)) {
-    appState.ui.primaryLayerId = appState.ui.selectedLayerIds[appState.ui.selectedLayerIds.length - 1] || null;
-  }
-}
-function updateHistoryButtons() {
-  $('btn-undo').disabled = undoStack.length === 0;
-  $('btn-redo').disabled = redoStack.length === 0;
+  commit();
+  const prev = history.undo.pop();
+  if (!prev) return;
+  history.redo.push(structuredClone(state.doc));
+  restore(prev);
 }
 
-// ---- render loop (rAF-batched) ----
-let dirty = false;
+function redo() {
+  commit();
+  const next = history.redo.pop();
+  if (!next) return;
+  history.undo.push(structuredClone(state.doc));
+  restore(next);
+}
+
+function loadDocument(doc) {
+  state.doc = doc;
+  state.ui.variant = 0;
+  state.ui.selected = null;
+  history.undo = [];
+  history.redo = [];
+  history.pending = null;
+  persist();
+  scheduleRender();
+}
+
+// ---------------------------------------------------------------------------
+// render loop
+
+let renderQueued = false;
 function scheduleRender() {
-  if (dirty) return;
-  dirty = true;
+  if (renderQueued) return;
+  renderQueued = true;
   requestAnimationFrame(() => {
-    dirty = false;
+    renderQueued = false;
     render();
   });
 }
 
-let cachedDerived = null;
 function render() {
-  const d = doc();
-  cachedDerived = derive(d);
-
-  // Derived views.
-  $('preview').innerHTML = previewSvg(cachedDerived);
-  renderLayerList();
-
-  // Canvas chrome. Set aspect-ratio and the `--ar` (width/height) the CSS uses
-  // to contain the canvas inside the stage in both dimensions.
-  $('canvas-wrap').style.aspectRatio = `${d.canvas.viewportWidth} / ${d.canvas.viewportHeight}`;
-  $('canvas-wrap').style.setProperty('--ar', d.canvas.viewportWidth / d.canvas.viewportHeight);
-  const bg = d.canvas.exportBackground;
-  $('checker').style.display = bg.transparent ? '' : 'none';
-  $('canvas-wrap').style.background = bg.transparent ? '' : bg.color;
-
-  positionLightHandle();
-  updateSelectionOverlay();
-  updateInspector();
-
-  // Re-clamp the view against the (possibly changed) canvas size and keep the
-  // transform in sync — e.g. after a canvas resize or document load.
-  clampView();
-  applyViewTransform();
+  if (document.activeElement !== $('doc-name')) $('doc-name').value = state.doc.name;
+  $('btn-undo').disabled = !history.undo.length && !history.pending;
+  $('btn-redo').disabled = !history.redo.length;
+  $('edit-all').checked = state.ui.editAll;
+  renderStage();
+  renderSelection();
+  renderShapeList();
+  renderVariants();
+  inspector.update();
 }
 
-// ---- selection marquee ----
-// Outlines the selected layer over the preview. Cached on (id + geometry) so
-// the marching-ants animation isn't reset every frame during a light drag
-// (only gradients change then, not the path geometry).
-let lastSelKey = null; // sentinel: null ≠ the empty-selection key, so the first
-// render always applies (otherwise an unselected start never gets hidden).
-function updateSelectionOverlay() {
-  const ov = $('selection-overlay');
-  const d = doc();
-  ov.setAttribute('viewBox', `0 0 ${d.canvas.viewportWidth} ${d.canvas.viewportHeight}`);
+// ---------------------------------------------------------------------------
+// stage
 
-  const sel = selectedLayers().filter((l) => l.visible && l.pathData);
-  const outline = sel.map((l) => bakedOutline(l)).join('');
-  const key = outline ? sel.map((l) => l.id).join(',') + '|' + outline : '';
-  if (key === lastSelKey) return;
-  lastSelKey = key;
+let sheet = null;
+let stageRoot = null;
 
-  // Toggle the `hidden` ATTRIBUTE (SVGElement has no `.hidden` IDL property,
-  // so setting el.hidden wouldn't reflect to CSS).
-  if (!outline) {
-    ov.setAttribute('hidden', '');
-    ov.innerHTML = '';
+function mountIcon(host) {
+  const root = host.attachShadow({ mode: 'open' });
+  root.adoptedStyleSheets = [sheet];
+  return root;
+}
+
+function renderStage() {
+  stageRoot.innerHTML = stageMarkup(variant());
+  $('stage-frame').classList.toggle('no-bg', variant().background.transparent);
+  $('guides').hidden = !state.ui.guides;
+}
+
+function fitStage() {
+  const box = $('canvas-box').getBoundingClientRect();
+  const avail = Math.max(120, Math.min(box.width, box.height) - 48);
+  state.ui.zoom = avail / M.CANVAS;
+  const px = M.CANVAS * state.ui.zoom;
+  $('stage-host').style.zoom = state.ui.zoom;
+  $('stage-frame').style.width = `${px}px`;
+  $('stage-frame').style.height = `${px}px`;
+  renderSelection();
+}
+
+function renderSelection() {
+  const s = selectedShape();
+  const sel = $('selection');
+  if (!s || s.hidden) {
+    sel.hidden = true;
     return;
   }
-  const dEsc = outline.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  ov.removeAttribute('hidden');
-  // sel-hit (first) is an invisible, FILLED drag target — `fill="none"` would
-  // not be hittable. The halo/line are decorative and inert (see styles.css).
-  ov.innerHTML =
-    `<path class="sel-hit" fill="#000" fill-opacity="0" d="${dEsc}"/>` +
-    `<path class="sel-halo" fill="none" d="${dEsc}"/>` +
-    `<path class="sel-line" fill="none" d="${dEsc}"/>`;
-}
-
-// ---- layer list (derived view) ----
-function renderLayerList() {
-  const ul = $('layer-list');
-  ul.innerHTML = '';
-  const layers = doc().layers;
-  // Display front-most first (paint order is bottom→top in the array).
-  for (let vi = 0; vi < layers.length; vi++) {
-    const layer = layers[layers.length - 1 - vi];
-    const li = document.createElement('li');
-    const isSel = appState.ui.selectedLayerIds.includes(layer.id);
-    li.className =
-      'layer-item' +
-      (isSel ? ' selected' : '') +
-      (layer.id === appState.ui.primaryLayerId ? ' primary' : '') +
-      (layer.visible ? '' : ' hidden-layer');
-    li.dataset.id = layer.id;
-
-    const vis = document.createElement('button');
-    vis.className = 'vis';
-    vis.textContent = layer.visible ? '👁' : '◌';
-    vis.title = layer.visible ? 'Hide' : 'Show';
-    vis.addEventListener('click', (e) => {
-      e.stopPropagation();
-      commit(() => { layer.visible = !layer.visible; });
-    });
-
-    const name = document.createElement('span');
-    name.className = 'lname';
-    name.textContent = layer.name;
-
-    const up = miniBtn('↑', 'Move forward', (e) => { e.stopPropagation(); moveLayer(layer.id, -1); });
-    const down = miniBtn('↓', 'Move back', (e) => { e.stopPropagation(); moveLayer(layer.id, +1); });
-    const dup = miniBtn('⧉', 'Duplicate', (e) => { e.stopPropagation(); duplicateLayers([layer.id]); });
-    const grad = miniBtn('▦', 'Duplicate as gradient overlay', (e) => { e.stopPropagation(); duplicateAsGradientOverlay(layer.id); });
-    const del = miniBtn('✕', 'Delete', (e) => { e.stopPropagation(); deleteLayer(layer.id); });
-
-    li.append(vis, name, up, down, dup, grad, del);
-    li.addEventListener('click', (e) => handleLayerClick(layer.id, e));
-    ul.appendChild(li);
-  }
-  if (!layers.length) {
-    const li = document.createElement('li');
-    li.className = 'hint';
-    li.textContent = 'No layers — Import an SVG or VectorDrawable.';
-    ul.appendChild(li);
+  const z = state.ui.zoom;
+  sel.hidden = false;
+  sel.style.left = `${s.x * z}px`;
+  sel.style.top = `${s.y * z}px`;
+  sel.style.width = `${s.w * z}px`;
+  sel.style.height = `${s.h * z}px`;
+  sel.style.transform = s.rotation ? `rotate(${s.rotation}deg)` : '';
+  sel.style.borderRadius = s.kind === 'ellipse' ? '50%' : `${s.radius * z}px`;
+  for (const h of sel.querySelectorAll('.handle')) {
+    const hv = h.dataset.handle;
+    if (hv === 'rot') {
+      h.style.left = '50%';
+      h.style.top = '-22px';
+      continue;
+    }
+    const [hx, hy] = hv.split(',').map(Number);
+    h.style.left = `${((hx + 1) / 2) * 100}%`;
+    h.style.top = `${((hy + 1) / 2) * 100}%`;
+    h.style.cursor = cursorFor(hx, hy, s.rotation);
   }
 }
-function miniBtn(label, title, onClick) {
-  const b = document.createElement('button');
-  b.className = 'mini';
-  b.textContent = label;
-  b.title = title;
-  b.addEventListener('click', onClick);
-  return b;
+
+function cursorFor(hx, hy, rotation) {
+  const names = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'];
+  const angle = (Math.atan2(hy, hx) * 180) / Math.PI + rotation;
+  const idx = Math.round((((angle % 180) + 180) % 180) / 45) % 4;
+  return names[idx];
 }
 
-function selectLayer(id) {
-  appState.ui.selectedLayerIds = id ? [id] : [];
-  appState.ui.primaryLayerId = id || null;
-  appState.ui.selectAnchorId = id || null;
-  scheduleRender();
-}
-// Layer-list click with modifiers: plain = single; Ctrl/Cmd = toggle; Shift =
-// range from the anchor (in visual / front-first order).
-function handleLayerClick(id, e) {
-  const ui = appState.ui;
-  if (e.shiftKey && ui.selectAnchorId) {
-    const order = doc().layers.map((l) => l.id).reverse();
-    const a = order.indexOf(ui.selectAnchorId);
-    const b = order.indexOf(id);
-    if (a >= 0 && b >= 0) {
-      const [lo, hi] = a < b ? [a, b] : [b, a];
-      ui.selectedLayerIds = order.slice(lo, hi + 1);
-      ui.primaryLayerId = id;
-    }
-  } else if (e.ctrlKey || e.metaKey) {
-    const i = ui.selectedLayerIds.indexOf(id);
-    if (i >= 0) {
-      ui.selectedLayerIds.splice(i, 1);
-      ui.primaryLayerId = ui.selectedLayerIds[ui.selectedLayerIds.length - 1] || null;
-    } else {
-      ui.selectedLayerIds.push(id);
-      ui.primaryLayerId = id;
-    }
-    ui.selectAnchorId = id;
-  } else {
-    ui.selectedLayerIds = [id];
-    ui.primaryLayerId = id;
-    ui.selectAnchorId = id;
-  }
-  scheduleRender();
-}
-function moveLayer(id, visualDir) {
-  // visualDir -1 = up in list (toward front), +1 = down (toward back).
-  const layers = doc().layers;
-  const ai = layers.findIndex((l) => l.id === id);
-  if (ai < 0) return;
-  const target = ai - visualDir; // up in list = +1 in array
-  if (target < 0 || target >= layers.length) return;
-  commit(() => {
-    const [item] = layers.splice(ai, 1);
-    layers.splice(target, 0, item);
-  });
-}
-function deleteLayer(id) {
-  commit(() => {
-    const layers = doc().layers;
-    const i = layers.findIndex((l) => l.id === id);
-    if (i >= 0) layers.splice(i, 1);
-    reconcileSelection();
-  });
-}
-function deleteSelected() {
-  if (!appState.ui.selectedLayerIds.length) return;
-  commit(() => {
-    const sel = new Set(appState.ui.selectedLayerIds);
-    doc().layers = doc().layers.filter((l) => !sel.has(l.id));
-    reconcileSelection();
-  });
-}
-// Duplicate the given layers, inserting each copy directly above its original
-// (i.e. right after it in paint order), then select the copies.
-function duplicateLayers(ids) {
-  if (!ids || !ids.length) return;
-  const set = new Set(ids);
-  commit(() => {
-    const out = [];
-    const newIds = [];
-    for (const l of doc().layers) {
-      out.push(l);
-      if (set.has(l.id)) {
-        const copy = structuredClone(l);
-        copy.id = newId();
-        copy.name = l.name + ' copy';
-        out.push(copy);
-        newIds.push(copy.id);
-      }
-    }
-    doc().layers = out;
-    appState.ui.selectedLayerIds = newIds;
-    appState.ui.primaryLayerId = newIds[newIds.length - 1] || null;
-    appState.ui.selectAnchorId = appState.ui.primaryLayerId;
-  });
-}
-// Clone a layer directly above itself as a gradient overlay: same path, fill
-// mode 'gradient' with a base-color→transparent default, shadow off (the base
-// already casts). Lets you keep an embossed base AND a gradient on one shape.
-function duplicateAsGradientOverlay(id) {
-  commit(() => {
-    const layers = doc().layers;
-    const i = layers.findIndex((l) => l.id === id);
-    if (i < 0) return;
-    const src = layers[i];
-    const copy = structuredClone(src);
-    copy.id = newId();
-    copy.name = src.name + ' gradient';
-    const base = (copy.material.baseColor || '#3b82f6').slice(0, 7);
-    const g = defaultGradient(base, copy.pathData ? P.bbox(P.parse(copy.pathData)) : null);
-    g.stops = [{ offset: 0, color: base, alpha: 0.55 }, { offset: 1, color: base, alpha: 0 }];
-    copy.material.fillMode = 'gradient';
-    copy.material.gradient = g;
-    copy.castsShadow = Object.assign({}, copy.castsShadow, { enabled: false });
-    layers.splice(i + 1, 0, copy);
-    appState.ui.selectedLayerIds = [copy.id];
-    appState.ui.primaryLayerId = copy.id;
-    appState.ui.selectAnchorId = copy.id;
-  });
-}
-// Resize the project's canvas (viewport = VD viewportWidth/Height = SVG
-// viewBox, also the dp display size). When "Scale contents" is on, every layer
-// path and the light position scale by the ratio so the icon keeps filling the
-// canvas; otherwise only the coordinate space changes.
-function resizeCanvas(newW, newH) {
-  const d = doc();
-  newW = clampNum(Math.round(newW), 1, 8192, d.canvas.viewportWidth);
-  newH = clampNum(Math.round(newH), 1, 8192, d.canvas.viewportHeight);
-  const oldW = d.canvas.viewportWidth;
-  const oldH = d.canvas.viewportHeight;
-  if (newW === oldW && newH === oldH) return;
-  const scaleContents = $('canvas-scale').checked;
-  commit(() => {
-    if (scaleContents && oldW > 0 && oldH > 0) {
-      const m = P.scale(newW / oldW, newH / oldH);
-      for (const l of d.layers) {
-        if (l.pathData) l.pathData = P.serialize(P.transform(P.parse(l.pathData), m));
-      }
-      d.light.position = { x: (d.light.position.x * newW) / oldW, y: (d.light.position.y * newH) / oldH };
-    }
-    d.canvas.viewportWidth = d.canvas.width = newW;
-    d.canvas.viewportHeight = d.canvas.height = newH;
-  });
-}
+// ---------------------------------------------------------------------------
+// canvas interaction
 
-// ---- light handle (signature interaction) ----
-const overlay = $('light-overlay');
-const handle = $('light-handle');
-let dragging = false;
+const rad = (d) => (d * Math.PI) / 180;
+const round2 = (n) => Math.round(n * 100) / 100;
+let drag = null;
 
-function viewportFromEvent(e) {
-  const rect = $('canvas-wrap').getBoundingClientRect();
-  const d = doc();
+function toCanvas(e) {
+  const r = $('stage-frame').getBoundingClientRect();
   return {
-    x: ((e.clientX - rect.left) / rect.width) * d.canvas.viewportWidth,
-    y: ((e.clientY - rect.top) / rect.height) * d.canvas.viewportHeight,
+    x: ((e.clientX - r.left) / r.width) * M.CANVAS,
+    y: ((e.clientY - r.top) / r.height) * M.CANVAS,
   };
 }
-function applyLightFromViewport(vx, vy) {
-  const d = doc();
-  const light = d.light;
-  if (light.type === 'point') {
-    light.position.x = clamp(vx, 0, d.canvas.viewportWidth);
-    light.position.y = clamp(vy, 0, d.canvas.viewportHeight);
-  } else {
-    const cx = d.canvas.viewportWidth / 2;
-    const cy = d.canvas.viewportHeight / 2;
-    const dx = vx - cx;
-    const dy = vy - cy;
-    const dist = Math.hypot(dx, dy);
-    const maxR = 0.5 * Math.min(d.canvas.viewportWidth, d.canvas.viewportHeight);
-    light.elevation = clamp(90 * (1 - dist / maxR), 0, 90);
-    if (dist > 0.001) light.azimuth = (Math.atan2(dx, -dy) / DEG + 360) % 360;
-  }
-}
-function onDragStart(e) {
-  if (doc().light.type === 'off') return; // nothing to drag when the light is off
-  dragging = true;
-  try { handle.setPointerCapture(e.pointerId); } catch (_) {}
-  beginGesture();
-  // Don't jump on press — the handle already sits at the light; only a drag moves it.
-  e.preventDefault();
-  e.stopPropagation();
-}
-function onDragMove(e) {
-  if (!dragging) return;
-  const v = viewportFromEvent(e);
-  applyLightFromViewport(v.x, v.y);
-  scheduleRender();
-}
-function onDragEnd(e) {
-  if (!dragging) return;
-  dragging = false;
-  try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
-  commitGesture();
-}
-// Only the handle is draggable — clicking elsewhere on the canvas does nothing.
-handle.addEventListener('pointerdown', onDragStart);
-handle.addEventListener('pointermove', onDragMove);
-handle.addEventListener('pointerup', onDragEnd);
-handle.addEventListener('pointercancel', onDragEnd);
 
-// ---- moving layers on the canvas (click to select, drag to move) ----
-// Listeners live on the STABLE #canvas-wrap; pointer capture there survives the
-// selection overlay's per-frame innerHTML rebuild during a drag. The light
-// handle stopPropagations its own presses, so they never reach here.
-const canvasWrap = $('canvas-wrap');
-const stage = $('stage');
-let layerDrag = null;
-// Zoom/pan gesture state (all ephemeral; the result lives in appState.ui.view).
-const activePointers = new Map(); // pointerId → { x, y } (for 2-finger pinch)
-let pinch = null; // { distStart, midStart, scaleStart, panStart:{x,y} }
-let panDrag = null; // { pointerId, startX, startY, panX0, panY0 }
-
-const MAX_ZOOM = 8;
-
-// Geometric hit-test: topmost (front-most) filled layer under a viewport point.
-let _hitCtx = null;
-function hitContext() {
-  if (!_hitCtx) _hitCtx = document.createElement('canvas').getContext('2d');
-  return _hitCtx;
+function toLocal(s, p) {
+  const cx = s.x + s.w / 2;
+  const cy = s.y + s.h / 2;
+  const t = rad(s.rotation);
+  const dx = p.x - cx;
+  const dy = p.y - cy;
+  return { x: dx * Math.cos(t) + dy * Math.sin(t), y: -dx * Math.sin(t) + dy * Math.cos(t) };
 }
-function layerAt(vx, vy) {
-  const layers = doc().layers;
-  for (let i = layers.length - 1; i >= 0; i--) {
-    const l = layers[i];
-    if (!l.visible || !l.pathData) continue;
-    const d = bakedOutline(l);
-    if (!d) continue;
-    let path;
-    try { path = new Path2D(d); } catch (_) { continue; }
-    const rule = l.fillRule === 'evenOdd' ? 'evenodd' : 'nonzero';
-    if (hitContext().isPointInPath(path, vx, vy, rule)) return l.id;
+
+function hitTest(p) {
+  const shapes = M.paintOrder(variant().shapes);
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const s = shapes[i];
+    if (s.hidden) continue;
+    const l = toLocal(s, p);
+    const hw = s.w / 2;
+    const hh = s.h / 2;
+    const inside = s.kind === 'ellipse'
+      ? (l.x / hw) ** 2 + (l.y / hh) ** 2 <= 1
+      : Math.abs(l.x) <= hw && Math.abs(l.y) <= hh;
+    if (inside) return s;
   }
   return null;
 }
 
-function startLayerDrag(e, v) {
-  const sel = selectedLayers();
-  if (!sel.length) return;
-  layerDrag = {
-    startX: v.x,
-    startY: v.y,
-    moved: false,
-    items: sel.map((l) => ({
-      id: l.id,
-      tx: (l.transform && +l.transform.translateX) || 0,
-      ty: (l.transform && +l.transform.translateY) || 0,
-    })),
-  };
-  try { canvasWrap.setPointerCapture(e.pointerId); } catch (_) {}
-  e.preventDefault();
-}
-
-function onCanvasPointerDown(e) {
-  // Track every pointer for pinch detection. A 2nd pointer starts a pinch and
-  // takes over from any single-pointer gesture in progress.
-  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (activePointers.size === 2) {
-    abortCanvasGestures();
-    startPinch();
-    e.preventDefault();
-    return;
-  }
-  // Middle-mouse pans always (even with a selection) — must run before the
-  // primary-button gate below.
-  if (e.button === 1) { startPanDrag(e); return; }
-  if (e.button != null && e.button !== 0) return; // primary button / touch only
-  const v = viewportFromEvent(e);
-  const modifier = e.ctrlKey || e.metaKey || e.shiftKey;
-  // Always hit-test the actual layer geometry (front-most first), NOT the
-  // selection overlay's sel-hit. A selected layer's sel-hit covers its whole
-  // shape, so trusting e.target would mask any layer it overlaps and you could
-  // never click-select them.
-  const hitId = layerAt(v.x, v.y);
-
-  // With a modifier, the canvas mirrors the layer list (toggle / range select).
-  if (modifier) {
-    if (hitId) handleLayerClick(hitId, e);
-    return;
-  }
-
-  if (hitId) {
-    if (appState.ui.selectedLayerIds.includes(hitId)) {
-      // Grabbed an already-selected shape → drag the whole selection.
-      startLayerDrag(e, v);
-    } else {
-      // Clicked a different (front-most) layer → select it, then drag it.
-      appState.ui.selectedLayerIds = [hitId];
-      appState.ui.primaryLayerId = hitId;
-      appState.ui.selectAnchorId = hitId;
-      startLayerDrag(e, v);
-      scheduleRender();
-    }
-  } else if (appState.ui.selectedLayerIds.length) {
-    selectLayer(null); // clicked empty canvas → deselect
-  } else if (contentOverflows()) {
-    startPanDrag(e); // empty canvas, nothing selected, zoomed in → pan
-  }
-}
-
-function onCanvasPointerMove(e) {
-  // Keep the tracked position fresh for pinch math.
-  if (activePointers.has(e.pointerId)) activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pinch) return onPinchMove();
-  if (panDrag) return onPanMove(e);
-  if (!layerDrag) return;
-  const v = viewportFromEvent(e);
-  const dx = v.x - layerDrag.startX;
-  const dy = v.y - layerDrag.startY;
-  if (!layerDrag.moved) {
-    if (dx === 0 && dy === 0) return; // a click that never moved: no undo entry
-    beginGesture();
-    layerDrag.moved = true;
-  }
-  const byId = new Map(doc().layers.map((l) => [l.id, l]));
-  for (const it of layerDrag.items) {
-    const l = byId.get(it.id);
-    if (!l) continue;
-    const t = ensureTransform(l);
-    t.translateX = it.tx + dx; // no clamping — off-canvas is allowed
-    t.translateY = it.ty + dy;
-  }
-  scheduleRender();
-}
-
-function onCanvasPointerUp(e) {
-  activePointers.delete(e.pointerId);
-  // A finger lifting ends the pinch; don't silently convert a remaining finger
-  // into a pan (that causes a jump).
-  if (pinch) { pinch = null; return; }
-  if (panDrag) { endPanDrag(e); return; }
-  if (!layerDrag) return;
-  const moved = layerDrag.moved;
-  layerDrag = null;
-  try { canvasWrap.releasePointerCapture(e.pointerId); } catch (_) {}
-  if (moved) commitGesture();
-}
-
-canvasWrap.addEventListener('pointerdown', onCanvasPointerDown);
-canvasWrap.addEventListener('pointermove', onCanvasPointerMove);
-canvasWrap.addEventListener('pointerup', onCanvasPointerUp);
-canvasWrap.addEventListener('pointercancel', onCanvasPointerUp);
-
-// ---- view-only zoom + pan (PLAN: transform #canvas-wrap; coords stay correct
-// because viewportFromEvent reads the live transformed rect, and the handle /
-// marquee ride inside canvas-wrap). The transform never touches the document,
-// so preview/PNG/SVG/VD/share are identical regardless of zoom/pan.
-function contentOverflows() {
-  return appState.ui.view.scale > 1;
-}
-// Center of the stage in client px = the transform-origin (canvas-wrap is
-// centered in the stage via place-items:center, so its center == stage center).
-function stageCenter() {
-  const r = stage.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-}
-// Keep pan within bounds: centered when the content fits, clamped to the content
-// edges when it overflows. Uses untransformed layout size (offsetWidth/Height).
-function clampView() {
-  const v = appState.ui.view;
-  const baseW = canvasWrap.offsetWidth;
-  const baseH = canvasWrap.offsetHeight;
-  if (!baseW || !baseH) return; // pre-layout: nothing to clamp yet
-  const maxPanX = Math.max(0, (v.scale * baseW - stage.clientWidth) / 2);
-  const maxPanY = Math.max(0, (v.scale * baseH - stage.clientHeight) / 2);
-  v.panX = clamp(v.panX, -maxPanX, maxPanX);
-  v.panY = clamp(v.panY, -maxPanY, maxPanY);
-}
-// Push appState.ui.view → the CSS transform (and the cursor affordance). Written
-// as '' at rest so the DOM stays clean and there's no identity-transform blur.
-function applyViewTransform() {
-  const v = appState.ui.view;
-  canvasWrap.style.transform =
-    v.scale === 1 && v.panX === 0 && v.panY === 0
-      ? ''
-      : `translate(${v.panX}px, ${v.panY}px) scale(${v.scale})`;
-  canvasWrap.classList.toggle('panning', !!panDrag);
-  // "grab" affordance only when an empty-canvas left-drag would pan.
-  canvasWrap.classList.toggle('pannable', !panDrag && contentOverflows() && !appState.ui.selectedLayerIds.length);
-}
-// Zoom toward a client-space focal point (cursor or pinch midpoint), keeping the
-// content under that point fixed. Origin-center focal formula:
-//   panNew = k*pan + (1-k)*(focal - center),  k = scaleNew/scaleOld.
-function zoomAt(cx, cy, factor) {
-  const v = appState.ui.view;
-  const sOld = v.scale;
-  const sNew = clamp(sOld * factor, 1, MAX_ZOOM);
-  if (sNew === sOld) return;
-  const k = sNew / sOld;
-  const C = stageCenter();
-  v.panX = k * v.panX + (1 - k) * (cx - C.x);
-  v.panY = k * v.panY + (1 - k) * (cy - C.y);
-  v.scale = sNew;
-  clampView();
-  applyViewTransform();
-}
-function onCanvasWheel(e) {
-  e.preventDefault(); // also stops trackpad-pinch (ctrl+wheel) page zoom
-  let dy = e.deltaY;
-  if (e.deltaMode === 1) dy *= 16; // lines → ~px
-  else if (e.deltaMode === 2) dy *= stage.clientHeight; // pages → px
-  // Trackpad pinch (ctrlKey) sends small deltas → use a finer rate.
-  const factor = Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0015));
-  zoomAt(e.clientX, e.clientY, factor);
-}
-
-// ---- pan (middle-mouse always; empty-canvas left-drag when nothing selected
-// and zoomed in). Pan is a screen-px translate, so we track raw client coords.
-function startPanDrag(e) {
-  const v = appState.ui.view;
-  panDrag = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, panX0: v.panX, panY0: v.panY };
-  try { canvasWrap.setPointerCapture(e.pointerId); } catch (_) {}
-  e.preventDefault();
-  applyViewTransform(); // reflect grabbing cursor
-}
-function onPanMove(e) {
-  const v = appState.ui.view;
-  v.panX = panDrag.panX0 + (e.clientX - panDrag.startX);
-  v.panY = panDrag.panY0 + (e.clientY - panDrag.startY);
-  clampView();
-  applyViewTransform();
-}
-function endPanDrag(e) {
-  try { canvasWrap.releasePointerCapture(e.pointerId); } catch (_) {}
-  panDrag = null;
-  applyViewTransform(); // drop grabbing cursor
-}
-
-// ---- two-finger pinch (touch) — unifies zoom + pan in one gesture ----
-function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
-function mid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
-function twoPointers() {
-  const it = activePointers.values();
-  return [it.next().value, it.next().value];
-}
-// Abort any in-progress single-pointer gesture before a pinch takes over, so a
-// half-finished layer move is committed (one undo step) and nothing dangles.
-function abortCanvasGestures() {
-  if (layerDrag) {
-    const moved = layerDrag.moved;
-    layerDrag = null;
-    if (moved) commitGesture();
-  }
-  if (panDrag) panDrag = null;
-}
-function startPinch() {
-  const [a, b] = twoPointers();
-  const v = appState.ui.view;
-  pinch = { distStart: dist(a, b) || 1, midStart: mid(a, b), scaleStart: v.scale, panStart: { x: v.panX, y: v.panY } };
-}
-function onPinchMove() {
-  const [a, b] = twoPointers();
-  if (!a || !b) return;
-  const v = appState.ui.view;
-  const C = stageCenter();
-  const m = mid(a, b);
-  const sNew = clamp(pinch.scaleStart * (dist(a, b) / pinch.distStart), 1, MAX_ZOOM);
-  const kk = sNew / pinch.scaleStart;
-  // Keep the content under the (moving) midpoint fixed → zoom + two-finger pan.
-  v.panX = kk * pinch.panStart.x + ((m.x - C.x) - kk * (pinch.midStart.x - C.x));
-  v.panY = kk * pinch.panStart.y + ((m.y - C.y) - kk * (pinch.midStart.y - C.y));
-  v.scale = sNew;
-  clampView();
-  applyViewTransform();
-}
-
-function positionLightHandle() {
-  const d = doc();
-  // Hide the handle when the light is off (nothing to drag).
-  if (d.light.type === 'off') {
-    handle.style.display = 'none';
-    return;
-  }
-  handle.style.display = '';
-  const vw = d.canvas.viewportWidth;
-  const vh = d.canvas.viewportHeight;
-  let vx;
-  let vy;
-  if (d.light.type === 'point') {
-    vx = d.light.position.x;
-    vy = d.light.position.y;
+function onCanvasDown(e) {
+  if (e.button !== 0) return;
+  const p = toCanvas(e);
+  const handle = e.target.closest?.('.handle');
+  const s = selectedShape();
+  if (handle && s) {
+    const hv = handle.dataset.handle;
+    drag = hv === 'rot'
+      ? { kind: 'rotate', id: s.id }
+      : { kind: 'resize', id: s.id, h: hv.split(',').map(Number), start: p, orig: { ...s } };
   } else {
-    const phi = d.light.azimuth * DEG;
-    const f = [Math.sin(phi), -Math.cos(phi)];
-    const maxR = 0.5 * Math.min(vw, vh);
-    const dist = (1 - d.light.elevation / 90) * maxR;
-    vx = vw / 2 + f[0] * dist;
-    vy = vh / 2 + f[1] * dist;
-  }
-  handle.style.left = (vx / vw) * 100 + '%';
-  handle.style.top = (vy / vh) * 100 + '%';
-}
-
-// ---- inspector (controlled inputs — update .value only) ----
-function setVal(el, v) {
-  if (document.activeElement === el) return; // don't fight the user mid-edit
-  el.value = v;
-}
-function setChecked(el, v) {
-  el.checked = !!v;
-}
-
-function updateInspector() {
-  const layer = primaryLayer();
-  const count = appState.ui.selectedLayerIds.length;
-  const showLayer = count >= 1 && !!layer;
-  $('scene-panel').hidden = showLayer;
-  $('layer-panel').hidden = !showLayer;
-  if (showLayer) updateLayerControls(layer, count);
-  else updateSceneControls();
-}
-
-function updateSceneControls() {
-  const d = doc();
-  const L = d.light;
-  setVal($('light-type'), L.type);
-  const off = L.type === 'off';
-  const point = L.type === 'point';
-  // Position X/Y apply to a point light; azimuth to a distant light; everything
-  // light-related hides when off.
-  $('row-light-x').style.display = point ? '' : 'none';
-  $('row-light-y').style.display = point ? '' : 'none';
-  setVal($('light-x'), round2(L.position.x));
-  setVal($('light-y'), round2(L.position.y));
-  $('row-azimuth').style.display = L.type === 'distant' ? '' : 'none';
-  $('row-elevation').style.display = off ? 'none' : '';
-  $('row-intensity').style.display = off ? 'none' : '';
-  setVal($('light-azimuth'), Math.round(L.azimuth));
-  $('out-azimuth').textContent = Math.round(L.azimuth) + '°';
-  setVal($('light-elevation'), Math.round(L.elevation));
-  $('out-elevation').textContent = Math.round(L.elevation) + '°';
-  setVal($('light-intensity'), L.intensity);
-  $('out-intensity').textContent = (+L.intensity).toFixed(2);
-
-  setVal($('canvas-w'), d.canvas.viewportWidth);
-  setVal($('canvas-h'), d.canvas.viewportHeight);
-  setChecked($('bg-transparent'), d.canvas.exportBackground.transparent);
-  $('row-bg-color').style.display = d.canvas.exportBackground.transparent ? 'none' : '';
-  bgColorField.setValue(d.canvas.exportBackground.color);
-  setVal($('png-size'), d.canvas.pngSize);
-}
-
-function updateLayerControls(layer, count) {
-  const m = layer.material;
-  // Multi-select: title shows the count; the per-layer Name field is hidden
-  // (controls show the primary layer's values; edits apply to all selected).
-  $('layer-panel-title').textContent = count > 1 ? `${count} layers` : 'Layer';
-  $('row-layer-name').style.display = count > 1 ? 'none' : '';
-  setVal($('layer-name'), layer.name);
-  // Position = primary layer's current bbox top-left (focus-safe via setVal).
-  const tl = layer.pathData ? layerTopLeft(layer) : { x: 0, y: 0 };
-  setVal($('layer-x'), round2(tl.x));
-  setVal($('layer-y'), round2(tl.y));
-  // Scale = primary layer's current scale as a percentage; link state swaps rows.
-  const t = layer.transform || {};
-  const sx = t.scaleX == null ? 1 : t.scaleX;
-  const sy = t.scaleY == null ? 1 : t.scaleY;
-  const linked = appState.ui.scaleLinked;
-  // Scale fields show the magnitude (always positive); the sign is the flip
-  // state, surfaced on the Flip buttons below.
-  setVal($('layer-scale'), round2(Math.abs(sx) * 100));
-  setVal($('layer-scale-x'), round2(Math.abs(sx) * 100));
-  setVal($('layer-scale-y'), round2(Math.abs(sy) * 100));
-  $('row-scale').style.display = linked ? '' : 'none';
-  $('row-scale-x').style.display = linked ? 'none' : '';
-  $('row-scale-y').style.display = linked ? 'none' : '';
-  const linkBtn = $('scale-link');
-  linkBtn.setAttribute('aria-pressed', String(linked));
-  linkBtn.textContent = linked ? '🔗 Linked' : '🔓 Independent';
-  $('flip-h').setAttribute('aria-pressed', String(sx < 0));
-  $('flip-v').setAttribute('aria-pressed', String(sy < 0));
-  matColorField.setValue(m.baseColor.slice(0, 7));
-  setVal($('mat-alpha'), m.fillAlpha);
-  $('out-alpha').textContent = (+m.fillAlpha).toFixed(2);
-  for (const r of document.querySelectorAll('input[name="fillmode"]')) r.checked = r.value === m.fillMode;
-  const embossed = m.fillMode === 'embossed';
-  $('row-emboss').style.display = embossed ? '' : 'none';
-  $('row-sheen').style.display = embossed ? '' : 'none';
-  setVal($('mat-emboss'), m.embossIntensity);
-  $('out-emboss').textContent = (+m.embossIntensity).toFixed(2);
-  setChecked($('mat-sheen-on'), m.sheen.enabled);
-  setVal($('mat-sheen'), m.sheen.strength);
-  updateGradientEditor(layer);
-  setVal($('mat-fillrule'), layer.fillRule);
-
-  setChecked($('shadow-on'), layer.castsShadow.enabled);
-  setVal($('shadow-opacity'), layer.castsShadow.opacity);
-  setVal($('shadow-spread'), layer.castsShadow.spread);
-  const dist = layer.castsShadow.distance == null ? 1 : layer.castsShadow.distance;
-  setVal($('shadow-distance'), dist);
-  $('out-shadow-distance').textContent = (+dist).toFixed(2) + '×';
-  setChecked($('shadow-clip'), layer.castsShadow.clipToLayers !== false);
-
-  const stroke = m.stroke;
-  setChecked($('stroke-on'), !!stroke);
-  strokeColorField.setValue(stroke ? stroke.color.slice(0, 7) : '#000000');
-  setVal($('stroke-width'), stroke ? stroke.width : 1);
-  setVal($('mat-fillnone'), String(!!m.fillNone));
-}
-
-// ---- gradient simple controls (presets / From→To / direction pad) ----
-// Everything here just mutates layer.material.gradient — the single source of
-// truth the Advanced editor and the derive() pipeline also read, so the two
-// stay in sync automatically (a preset that adds a 3rd stop shows up in both).
-
-// The layer's bbox in its own raw-path space — the space gradient geometry is
-// stored in (derive() bakes the layer transform on top). Falls back to a unit
-// box so presets still produce something on an empty/degenerate path.
-function layerBox(layer) {
-  if (layer && layer.pathData) {
-    try { return P.bbox(P.parse(layer.pathData)); } catch (_) { /* fall through */ }
-  }
-  return { minX: 0, minY: 0, maxX: 100, maxY: 100, cx: 50, cy: 50, w: 100, h: 100 };
-}
-// 8 compass directions → unit vector pointing the way the gradient progresses
-// (From → To). e.g. 's' = top→bottom, 'se' = top-left→bottom-right.
-const DIR_VEC = { n: [0, -1], ne: [1, -1], e: [1, 0], se: [1, 1], s: [0, 1], sw: [-1, 1], w: [-1, 0], nw: [-1, -1] };
-function applyLinearDir(g, dir, box) {
-  const v = DIR_VEC[dir];
-  if (!v) return;
-  const hw = box.w / 2 || 50;
-  const hh = box.h / 2 || 50;
-  g.type = 'linear';
-  g.x1 = box.cx - v[0] * hw; g.y1 = box.cy - v[1] * hh;
-  g.x2 = box.cx + v[0] * hw; g.y2 = box.cy + v[1] * hh;
-}
-function applyRadial(g, box) {
-  g.type = 'radial';
-  g.cx = box.cx; g.cy = box.cy;
-  g.r = 0.5 * Math.hypot(box.w, box.h) || 50; // half-diagonal covers the shape
-}
-// Which direction button to highlight: snap a linear gradient's vector to the
-// nearest of the 8 compass points (best-effort for hand-tuned coordinates).
-function currentDir(g) {
-  const dx = g.x2 - g.x1;
-  const dy = g.y2 - g.y1;
-  if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) return null;
-  const ang = Math.atan2(dy, dx);
-  let best = null;
-  let bestD = Infinity;
-  for (const k in DIR_VEC) {
-    const [vx, vy] = DIR_VEC[k];
-    let d = Math.abs(((ang - Math.atan2(vy, vx) + Math.PI) % (2 * Math.PI)) - Math.PI);
-    if (d < bestD) { bestD = d; best = k; }
-  }
-  return best;
-}
-// Shade a hex toward white / black in OKLab (perceptual, matches the emboss ramp).
-function lighten(hex, k) { return toHex(mix(parseColor(hex) || parseColor('#3b82f6'), WHITE, k)); }
-function darken(hex, k) { return toHex(mix(parseColor(hex) || parseColor('#3b82f6'), BLACK, k)); }
-// A fresh gradient object seeded with sensible geometry for the layer's box.
-function seedGradient(box) {
-  return {
-    type: 'linear',
-    x1: box.minX, y1: box.cy, x2: box.maxX, y2: box.cy,
-    cx: box.cx, cy: box.cy, r: 0.5 * Math.max(box.w, box.h) || 50,
-    stops: [],
-  };
-}
-// One-click "looks" — each builds a complete gradient from the layer's base
-// colour and box. Returned object replaces material.gradient wholesale.
-const GRAD_PRESETS = {
-  toplight(base, box) {
-    const g = seedGradient(box);
-    applyLinearDir(g, 's', box); // light from the top
-    g.stops = [{ offset: 0, color: lighten(base, 0.42), alpha: 1 }, { offset: 1, color: base, alpha: 1 }];
-    return g;
-  },
-  glow(base, box) {
-    const g = seedGradient(box);
-    applyRadial(g, box);
-    g.stops = [{ offset: 0, color: lighten(base, 0.55), alpha: 1 }, { offset: 1, color: base, alpha: 1 }];
-    return g;
-  },
-  sheen(base, box) {
-    const g = seedGradient(box);
-    applyLinearDir(g, 'se', box);
-    g.stops = [
-      { offset: 0, color: lighten(base, 0.6), alpha: 1 },
-      { offset: 0.5, color: base, alpha: 1 },
-      { offset: 1, color: darken(base, 0.18), alpha: 1 },
-    ];
-    return g;
-  },
-  diagonal(base, box) {
-    const g = seedGradient(box);
-    applyLinearDir(g, 'se', box);
-    g.stops = [{ offset: 0, color: base, alpha: 1 }, { offset: 1, color: lighten(base, 0.32), alpha: 1 }];
-    return g;
-  },
-  fade(base, box) {
-    const g = seedGradient(box);
-    applyLinearDir(g, 's', box);
-    g.stops = [{ offset: 0, color: base, alpha: 0.9 }, { offset: 1, color: base, alpha: 0 }];
-    return g;
-  },
-};
-// Reflect the current gradient into the simple controls (focus/popover-safe).
-function updateGradientSimple(g) {
-  const stops = g.stops;
-  const first = stops[0] || { color: '#000000', alpha: 1 };
-  const last = stops[stops.length - 1] || first;
-  if (gradFromField) gradFromField.setValue((first.color || '#000000').slice(0, 7));
-  if (gradToField) gradToField.setValue((last.color || '#000000').slice(0, 7));
-  setChecked($('grad-fade'), (last.alpha == null ? 1 : last.alpha) < 1);
-  const active = g.type === 'radial' ? 'radial' : currentDir(g);
-  for (const btn of $('dir-pad').querySelectorAll('button')) {
-    btn.setAttribute('aria-pressed', String(btn.dataset.dir === active));
-  }
-}
-
-// ---- gradient editor (derived: stop rows rebuilt only when the set changes) ----
-let gradStops = []; // [{ field, off, al }] for the current stop rows
-let gradStopsKey = null;
-function updateGradientEditor(layer) {
-  const isGrad = layer.material.fillMode === 'gradient';
-  $('gradient-editor').hidden = !isGrad;
-  const g = layer.material.gradient;
-  if (!isGrad || !g) { gradStopsKey = null; return; }
-
-  updateGradientSimple(g);
-  setVal($('grad-type'), g.type);
-  const lin = g.type !== 'radial';
-  for (const el of document.querySelectorAll('.grad-lin')) el.style.display = lin ? '' : 'none';
-  for (const el of document.querySelectorAll('.grad-rad')) el.style.display = lin ? 'none' : '';
-  setVal($('grad-x1'), round2(g.x1)); setVal($('grad-y1'), round2(g.y1));
-  setVal($('grad-x2'), round2(g.x2)); setVal($('grad-y2'), round2(g.y2));
-  setVal($('grad-cx'), round2(g.cx)); setVal($('grad-cy'), round2(g.cy)); setVal($('grad-r'), round2(g.r));
-  // CSS preview bar (always shown left→right regardless of type)
-  $('grad-bar').style.background =
-    'linear-gradient(to right,' + g.stops.map((s) => `${stopCss(s)} ${Math.round(s.offset * 100)}%`).join(',') + ')';
-
-  // Rebuild stop rows only when the layer or stop count changes (so editing a
-  // value doesn't destroy a focused input or an open color popover).
-  const key = layer.id + '|' + g.stops.length;
-  if (key !== gradStopsKey) {
-    gradStopsKey = key;
-    const cont = $('grad-stops');
-    cont.innerHTML = '';
-    gradStops = [];
-    g.stops.forEach((stop, i) => {
-      const row = document.createElement('div');
-      row.className = 'row grad-stop';
-      const sw = document.createElement('button');
-      sw.type = 'button';
-      sw.className = 'swatch';
-      const off = mkNum('grad-stop-off', 0, 1, 0.01);
-      const al = mkNum('grad-stop-al', 0, 1, 0.05);
-      const del = miniBtn('✕', 'Remove stop', (e) => {
-        e.stopPropagation();
-        if (g.stops.length <= 2) return toast('A gradient needs at least 2 stops.', 'warn');
-        commit(() => withPrimary((l) => { if (l.material.gradient) l.material.gradient.stops.splice(i, 1); }));
-      });
-      row.append(sw, off, al, del);
-      cont.appendChild(row);
-      const field = createColorField(sw, {
-        onInput: (hex) => { beginGesture(); withPrimary((l) => setStop(l, i, { color: hex })); scheduleRender(); },
-        onCommit: commitGesture,
-      });
-      liveInput(off, (el) => { const v = +el.value; if (isFinite(v)) withPrimary((l) => setStop(l, i, { offset: clamp(v, 0, 1) })); });
-      liveInput(al, (el) => { const v = +el.value; if (isFinite(v)) withPrimary((l) => setStop(l, i, { alpha: clamp(v, 0, 1) })); });
-      gradStops.push({ field, off, al });
-    });
-  }
-  // Update row values (focus-safe).
-  g.stops.forEach((stop, i) => {
-    const r = gradStops[i];
-    if (!r) return;
-    r.field.setValue((stop.color || '#000000').slice(0, 7));
-    setVal(r.off, round2(stop.offset));
-    setVal(r.al, round2(stop.alpha == null ? 1 : stop.alpha));
-  });
-}
-function setStop(layer, i, patch) {
-  const g = layer.material.gradient;
-  if (g && g.stops[i]) Object.assign(g.stops[i], patch);
-}
-function stopCss(s) {
-  const a = s.alpha == null ? 1 : s.alpha;
-  const c = (s.color || '#000000').slice(1);
-  const r = parseInt(c.slice(0, 2), 16) || 0, gg = parseInt(c.slice(2, 4), 16) || 0, b = parseInt(c.slice(4, 6), 16) || 0;
-  return `rgba(${r},${gg},${b},${a})`;
-}
-function mkNum(cls, min, max, step) {
-  const el = document.createElement('input');
-  el.type = 'number';
-  el.className = 'num ' + cls;
-  el.min = min;
-  el.max = max;
-  el.step = step;
-  return el;
-}
-
-// ---- wire controlled inputs (once) ----
-function liveInput(el, mutate) {
-  el.addEventListener('input', () => {
-    beginGesture();
-    mutate(el);
+    const hit = hitTest(p);
+    state.ui.selected = hit ? hit.id : null;
+    drag = hit ? { kind: 'move', id: hit.id, start: p, orig: { x: hit.x, y: hit.y } } : null;
     scheduleRender();
-  });
-  el.addEventListener('change', commitGesture);
+  }
+  if (drag) {
+    $('canvas-box').setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
 }
 
-function wireControls() {
-  // Scene · light
-  liveInput($('light-type'), (el) => { doc().light.type = el.value; });
-  liveInput($('light-x'), (el) => { const v = +el.value; if (isFinite(v)) doc().light.position.x = clamp(v, 0, doc().canvas.viewportWidth); });
-  liveInput($('light-y'), (el) => { const v = +el.value; if (isFinite(v)) doc().light.position.y = clamp(v, 0, doc().canvas.viewportHeight); });
-  liveInput($('light-azimuth'), (el) => { doc().light.azimuth = +el.value; });
-  liveInput($('light-elevation'), (el) => { doc().light.elevation = +el.value; });
-  liveInput($('light-intensity'), (el) => { doc().light.intensity = +el.value; });
-
-  // Scene · canvas — resize on commit (change), not per keystroke, so "scale
-  // contents" computes the ratio against the size you started from. With "Link
-  // W/H" on (default), editing one dimension updates the other to keep the
-  // current aspect ratio, so the whole canvas resizes together.
-  // After resizing, reflect the final dimensions in BOTH fields immediately.
-  // The async render's setVal() skips a focused field, so when the user edits
-  // one field and tabs/clicks into the other, the linked field would otherwise
-  // stay stale — write them directly here.
-  function syncCanvasFields() {
-    $('canvas-w').value = doc().canvas.viewportWidth;
-    $('canvas-h').value = doc().canvas.viewportHeight;
+function onCanvasMove(e) {
+  if (!drag) return;
+  const p = toCanvas(e);
+  if (drag.kind === 'move') {
+    const dx = p.x - drag.start.x;
+    const dy = p.y - drag.start.y;
+    if (!dx && !dy) return;
+    mutate(() => forShape(drag.id, (s) => {
+      s.x = round2(drag.orig.x + dx);
+      s.y = round2(drag.orig.y + dy);
+    }));
+  } else if (drag.kind === 'rotate') {
+    const s = selectedShape();
+    const cx = s.x + s.w / 2;
+    const cy = s.y + s.h / 2;
+    let a = (Math.atan2(p.y - cy, p.x - cx) * 180) / Math.PI + 90;
+    if (e.shiftKey) a = Math.round(a / 15) * 15;
+    a = ((((a + 180) % 360) + 360) % 360) - 180;
+    mutate(() => forShape(drag.id, (x) => { x.rotation = round2(a); }));
+  } else if (drag.kind === 'resize') {
+    resizeTo(p, e.shiftKey);
   }
-  $('canvas-w').addEventListener('change', () => {
-    const c = doc().canvas;
-    let w = +$('canvas-w').value;
-    let h = +$('canvas-h').value;
-    if ($('canvas-lock').checked && c.viewportWidth > 0) h = Math.round((w * c.viewportHeight) / c.viewportWidth);
-    resizeCanvas(w, h);
-    syncCanvasFields();
-  });
-  $('canvas-h').addEventListener('change', () => {
-    const c = doc().canvas;
-    let w = +$('canvas-w').value;
-    let h = +$('canvas-h').value;
-    if ($('canvas-lock').checked && c.viewportHeight > 0) w = Math.round((h * c.viewportWidth) / c.viewportHeight);
-    resizeCanvas(w, h);
-    syncCanvasFields();
-  });
-  for (const b of document.querySelectorAll('.preset-size')) {
-    b.addEventListener('click', () => resizeCanvas(+b.dataset.size, +b.dataset.size));
+}
+
+// Resizes in the shape's own rotated frame: the dragged edge follows the
+// pointer and the opposite edge stays put.
+function resizeTo(p, keepAspect) {
+  const o = drag.orig;
+  const [hx, hy] = drag.h;
+  const t = rad(o.rotation);
+  const c = Math.cos(t);
+  const sn = Math.sin(t);
+  const wx = p.x - drag.start.x;
+  const wy = p.y - drag.start.y;
+  const lx = wx * c + wy * sn;
+  const ly = -wx * sn + wy * c;
+  let w = hx ? Math.max(1, o.w + hx * lx) : o.w;
+  let h = hy ? Math.max(1, o.h + hy * ly) : o.h;
+  if (keepAspect && hx && hy) {
+    const k = Math.max(w / o.w, h / o.h);
+    w = o.w * k;
+    h = o.h * k;
   }
-  liveInput($('bg-transparent'), (el) => { doc().canvas.exportBackground.transparent = el.checked; });
-  liveInput($('png-size'), (el) => { doc().canvas.pngSize = clampNum(+el.value, 16, 8192, 1024); });
+  const cxl = (hx * (w - o.w)) / 2;
+  const cyl = (hy * (h - o.h)) / 2;
+  const cx = o.x + o.w / 2 + cxl * c - cyl * sn;
+  const cy = o.y + o.h / 2 + cxl * sn + cyl * c;
+  mutate(() => forShape(drag.id, (s) => {
+    s.w = round2(w);
+    s.h = round2(h);
+    s.x = round2(cx - w / 2);
+    s.y = round2(cy - h / 2);
+  }));
+}
 
-  // Color fields (custom in-page popover — never clips off-screen).
-  matColorField = createColorField($('mat-color'), {
-    onInput: (hex) => { beginGesture(); withSelected((l) => (l.material.baseColor = hex)); scheduleRender(); },
-    onCommit: commitGesture,
-  });
-  bgColorField = createColorField($('bg-color'), {
-    onInput: (hex) => { beginGesture(); doc().canvas.exportBackground.color = hex; scheduleRender(); },
-    onCommit: commitGesture,
-  });
-  strokeColorField = createColorField($('stroke-color'), {
-    onInput: (hex) => { beginGesture(); withSelected((l) => { if (l.material.stroke) l.material.stroke.color = hex; }); scheduleRender(); },
-    onCommit: commitGesture,
-  });
+function onCanvasUp() {
+  if (!drag) return;
+  drag = null;
+  commit();
+}
 
-  // Document name → export/save filename (UI state; not undone).
-  const nameInput = $('doc-name');
-  nameInput.value = appState.ui.projectName;
-  nameInput.addEventListener('input', () => { appState.ui.projectName = nameInput.value; });
+// ---------------------------------------------------------------------------
+// shape list
 
-  // Layer · position — absolute bbox top-left. Editing moves the PRIMARY layer
-  // to the typed coordinate and shifts every selected layer by the same delta
-  // (matching drag). Delta is from the exact minX/minY so there's no drift.
-  liveInput($('layer-x'), (el) => {
-    const p = primaryLayer();
-    if (!p || !p.pathData) return;
-    const v = +el.value;
-    if (!isFinite(v)) return;
-    const dx = v - layerTopLeft(p).x;
-    withSelected((l) => translateLayer(l, dx, 0));
-  });
-  liveInput($('layer-y'), (el) => {
-    const p = primaryLayer();
-    if (!p || !p.pathData) return;
-    const v = +el.value;
-    if (!isFinite(v)) return;
-    const dy = v - layerTopLeft(p).y;
-    withSelected((l) => translateLayer(l, 0, dy));
-  });
-
-  // Layer · scale — percentage (100 = original), scaling each selected layer in
-  // place about its own center. Guard against non-finite/<=0 so the affine
-  // matrix in derive() is never poisoned. Linked = one field drives both axes.
-  liveInput($('layer-scale'), (el) => {
-    const v = +el.value;
-    if (!isFinite(v) || v <= 0) return;
-    scaleSelection(v / 100, v / 100);
-  });
-  liveInput($('layer-scale-x'), (el) => {
-    const v = +el.value;
-    if (!isFinite(v) || v <= 0) return;
-    scaleSelection(v / 100, null);
-  });
-  liveInput($('layer-scale-y'), (el) => {
-    const v = +el.value;
-    if (!isFinite(v) || v <= 0) return;
-    scaleSelection(null, v / 100);
-  });
-  // Link toggle is a session preference (not part of the document): just swaps
-  // which scale rows are visible.
-  $('scale-link').addEventListener('click', () => {
-    appState.ui.scaleLinked = !appState.ui.scaleLinked;
-    updateInspector();
-  });
-  // Flip the selection (mirror) — one undo entry per click.
-  $('flip-h').addEventListener('click', () => { if (selectedLayers().length) commit(() => flipSelection('x')); });
-  $('flip-v').addEventListener('click', () => { if (selectedLayers().length) commit(() => flipSelection('y')); });
-
-  // Layer · material
-  liveInput($('layer-name'), (el) => { withPrimary((l) => (l.name = el.value)); });
-  liveInput($('mat-alpha'), (el) => { withSelected((l) => (l.material.fillAlpha = +el.value)); });
-  for (const r of document.querySelectorAll('input[name="fillmode"]')) {
-    r.addEventListener('change', () => commit(() => withSelected((l) => {
-      l.material.fillMode = r.value;
-      // Switching to Gradient with no gradient yet → seed one spanning the shape.
-      if (r.value === 'gradient' && !l.material.gradient) {
-        l.material.gradient = defaultGradient(l.material.baseColor, l.pathData ? P.bbox(P.parse(l.pathData)) : null);
-      }
-    })));
+function renderShapeList() {
+  const list = $('shape-list');
+  const v = variant();
+  const ordered = M.paintOrder(v.shapes).reverse();
+  list.replaceChildren();
+  if (!ordered.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'No shapes yet. Add a rectangle or circle.';
+    list.append(li);
   }
-  liveInput($('mat-emboss'), (el) => { withSelected((l) => (l.material.embossIntensity = +el.value)); });
-  liveInput($('mat-sheen-on'), (el) => { withSelected((l) => (l.material.sheen.enabled = el.checked)); });
-  liveInput($('mat-sheen'), (el) => { withSelected((l) => (l.material.sheen.strength = +el.value)); });
-  liveInput($('mat-fillrule'), (el) => { withSelected((l) => (l.fillRule = el.value)); });
-
-  // Gradient editor. The SIMPLE controls are bulk edits across every selected
-  // gradient layer (withSelectedGradients); the ADVANCED controls (exact stops
-  // and coordinates, which differ per layer) edit the primary layer only.
-  // --- simple controls ---
-  // Quick-look presets: rebuild each selected gradient from ITS base + box.
-  for (const btn of document.querySelectorAll('.grad-presets [data-preset]')) {
-    btn.addEventListener('click', () => {
-      const build = GRAD_PRESETS[btn.dataset.preset];
-      if (!build) return;
-      commit(() => withSelectedGradients((l) => {
-        const base = (l.material.baseColor || '#3b82f6').slice(0, 7);
-        l.material.gradient = build(base, layerBox(l));
-      }));
+  let group = null;
+  for (const s of ordered) {
+    if (s.layer !== group) {
+      group = s.layer;
+      const head = document.createElement('li');
+      head.className = 'group-head';
+      head.textContent = group === 'background' ? 'Background layer' : 'Foreground layer';
+      list.append(head);
+    }
+    const li = document.createElement('li');
+    li.className = 'shape-row';
+    li.classList.toggle('selected', s.id === state.ui.selected);
+    li.classList.toggle('hidden-shape', s.hidden);
+    const sw = document.createElement('span');
+    sw.className = `shape-swatch ${s.kind}`;
+    sw.style.background = s.style.color;
+    const name = document.createElement('span');
+    name.className = 'shape-name';
+    name.textContent = s.name;
+    const eye = document.createElement('button');
+    eye.className = 'eye';
+    eye.type = 'button';
+    eye.textContent = s.hidden ? 'Show' : 'Hide';
+    eye.addEventListener('click', (e) => {
+      e.stopPropagation();
+      edit(() => forShape(s.id, (x) => { x.hidden = !s.hidden; }));
     });
-  }
-  // From / To colour swatches map to the first / last stop.
-  gradFromField = createColorField($('grad-from'), {
-    onInput: (hex) => { beginGesture(); withSelectedGradients((l, g) => { if (g.stops[0]) g.stops[0].color = hex; }); scheduleRender(); },
-    onCommit: commitGesture,
-  });
-  gradToField = createColorField($('grad-to'), {
-    onInput: (hex) => { beginGesture(); withSelectedGradients((l, g) => { if (g.stops.length) g.stops[g.stops.length - 1].color = hex; }); scheduleRender(); },
-    onCommit: commitGesture,
-  });
-  // Fade: toggle the end stop's alpha between fully opaque and fully transparent.
-  liveInput($('grad-fade'), (el) => { withSelectedGradients((l, g) => { if (g.stops.length) g.stops[g.stops.length - 1].alpha = el.checked ? 0 : 1; }); });
-  // Direction pad: 8 arrows set a linear direction; the centre dot makes it radial.
-  for (const btn of $('dir-pad').querySelectorAll('button')) {
-    btn.addEventListener('click', () => commit(() => withSelectedGradients((l, g) => {
-      if (btn.dataset.dir === 'radial') applyRadial(g, layerBox(l));
-      else applyLinearDir(g, btn.dataset.dir, layerBox(l));
-    })));
-  }
-  // --- advanced controls ---
-  liveInput($('grad-type'), (el) => { withPrimary((l) => { if (l.material.gradient) l.material.gradient.type = el.value === 'radial' ? 'radial' : 'linear'; }); });
-  $('grad-add').addEventListener('click', () => commit(() => withPrimary((l) => {
-    const g = l.material.gradient;
-    if (!g) return;
-    const last = g.stops[g.stops.length - 1];
-    g.stops.push({ offset: 1, color: last ? last.color : '#ffffff', alpha: last ? (last.alpha == null ? 1 : last.alpha) : 1 });
-  })));
-  for (const [id, key] of [['grad-x1', 'x1'], ['grad-y1', 'y1'], ['grad-x2', 'x2'], ['grad-y2', 'y2'], ['grad-cx', 'cx'], ['grad-cy', 'cy'], ['grad-r', 'r']]) {
-    liveInput($(id), (el) => { const v = +el.value; if (isFinite(v)) withPrimary((l) => { if (l.material.gradient) l.material.gradient[key] = v; }); });
-  }
-
-  // Layer · shadow
-  liveInput($('shadow-on'), (el) => { withSelected((l) => (l.castsShadow.enabled = el.checked)); });
-  liveInput($('shadow-opacity'), (el) => { withSelected((l) => (l.castsShadow.opacity = +el.value)); });
-  liveInput($('shadow-spread'), (el) => { withSelected((l) => (l.castsShadow.spread = +el.value)); });
-  liveInput($('shadow-distance'), (el) => {
-    $('out-shadow-distance').textContent = (+el.value).toFixed(2) + '×';
-    withSelected((l) => (l.castsShadow.distance = +el.value));
-  });
-  liveInput($('shadow-clip'), (el) => { withSelected((l) => (l.castsShadow.clipToLayers = el.checked)); });
-
-  // Layer · stroke
-  liveInput($('stroke-on'), (el) => {
-    withSelected((l) => {
-      if (el.checked) l.material.stroke = l.material.stroke || { color: '#000000ff', width: 1, cap: 'butt', join: 'miter' };
-      else l.material.stroke = null;
+    li.append(sw, name, eye);
+    li.addEventListener('click', () => {
+      state.ui.selected = s.id;
+      scheduleRender();
     });
-  });
-  liveInput($('stroke-width'), (el) => { withSelected((l) => { if (l.material.stroke) l.material.stroke.width = +el.value; }); });
-  liveInput($('mat-fillnone'), (el) => { withSelected((l) => (l.material.fillNone = el.value === 'true')); });
-
-  $('layer-deselect').addEventListener('click', () => selectLayer(null));
-}
-
-// Apply an edit to every selected layer (shared material/shadow/stroke).
-function withSelected(fn) {
-  for (const l of selectedLayers()) fn(l);
-}
-// Apply an edit to the primary layer only (the per-layer Name).
-function withPrimary(fn) {
-  const l = primaryLayer();
-  if (l) fn(l);
-}
-// Apply a gradient edit to EVERY selected layer that uses a gradient fill (the
-// simple gradient controls are bulk edits, like base colour / opacity / emboss
-// — so selecting all layers and clicking a preset changes them all). fn gets
-// (layer, gradient). Skips selected layers that aren't gradient layers.
-function withSelectedGradients(fn) {
-  for (const l of selectedLayers()) {
-    if (l.material.fillMode === 'gradient' && l.material.gradient) fn(l, l.material.gradient);
+    list.append(li);
   }
+  const s = selectedShape();
+  for (const id of ['btn-shape-up', 'btn-shape-down', 'btn-shape-dup', 'btn-shape-del']) $(id).disabled = !s;
 }
 
-// ---- layer position (move) ----
-// The move offset lives in layer.transform.translateX/Y — already baked by
-// derive() and bakedOutline(), and already persisted. These helpers are the
-// single source of truth shared by the drag gesture and the X/Y fields.
-function ensureTransform(layer) {
-  if (!layer.transform) layer.transform = { translateX: 0, translateY: 0 };
-  if (!isFinite(+layer.transform.translateX)) layer.transform.translateX = 0;
-  if (!isFinite(+layer.transform.translateY)) layer.transform.translateY = 0;
-  if (!isFinite(+layer.transform.scaleX)) layer.transform.scaleX = 1;
-  if (!isFinite(+layer.transform.scaleY)) layer.transform.scaleY = 1;
-  return layer.transform;
-}
-function translateLayer(layer, dx, dy) {
-  const t = ensureTransform(layer);
-  t.translateX += dx;
-  t.translateY += dy;
-}
-// Scale every selected layer about the selection's shared "home" center, so a
-// multi-layer shape (e.g. a pen made of several paths) scales as one group and
-// keeps its parts aligned. Each layer's pivot is set to that common viewport
-// point expressed in the layer's own raw-path space (C − translate), and the
-// scale is applied; translate is left untouched. With a single layer selected
-// the center is its own, so it scales in place — identical to before.
-//
-// `home` bbox = raw bbox shifted by the current translate (independent of the
-// current scale, since pivot keeps the displayed centre at raw-centre +
-// translate). Computing C from that keeps absolute scaling stable across edits.
-// Pass null for an axis to leave it untouched (independent X/Y when unlinked).
-// Apply `fn(transform)` to every selected layer with each layer's pivot set to
-// the selection's shared "home" center, so scale and flip act on the whole
-// selection as one unit (multi-part shapes keep their parts aligned). The home
-// center = union of raw-bbox + translate, independent of the current scale/sign
-// so it's a stable axis across repeated edits. With one layer selected it's the
-// layer's own center, so it transforms in place — identical to before.
-function transformSelectionAboutCenter(fn) {
-  const sel = selectedLayers().filter((l) => l.pathData);
-  if (!sel.length) return;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const l of sel) {
-    const b = P.bbox(P.parse(l.pathData));
-    const tx = (l.transform && +l.transform.translateX) || 0;
-    const ty = (l.transform && +l.transform.translateY) || 0;
-    minX = Math.min(minX, b.minX + tx);
-    minY = Math.min(minY, b.minY + ty);
-    maxX = Math.max(maxX, b.maxX + tx);
-    maxY = Math.max(maxY, b.maxY + ty);
-  }
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  for (const l of sel) {
-    const t = ensureTransform(l);
-    t.pivotX = cx - (t.translateX || 0);
-    t.pivotY = cy - (t.translateY || 0);
-    fn(t, l);
-  }
-}
-// Set the scale magnitude while preserving the flip sign, so changing the
-// percentage never un-flips a layer.
-function scaleSelection(sx, sy) {
-  transformSelectionAboutCenter((t) => {
-    if (sx != null) t.scaleX = Math.abs(sx) * (t.scaleX < 0 ? -1 : 1);
-    if (sy != null) t.scaleY = Math.abs(sy) * (t.scaleY < 0 ? -1 : 1);
+function addShape(kind) {
+  const shape = M.newShape(kind);
+  const layerCount = variant().shapes.length;
+  shape.name = `${shape.name} ${layerCount + 1}`;
+  edit(() => {
+    for (const v of targets()) v.shapes.push(structuredClone(shape));
   });
-}
-// Mirror the selection about its shared center: 'x' = horizontal (negate
-// scaleX), 'y' = vertical (negate scaleY). Multi-select flips as a group.
-function flipSelection(axis) {
-  transformSelectionAboutCenter((t) => {
-    if (axis === 'x') t.scaleX = -t.scaleX;
-    else t.scaleY = -t.scaleY;
-  });
-}
-// Current top-left of the layer's baked bbox, in viewport (canvas) coordinates.
-function layerTopLeft(layer) {
-  if (!layer || !layer.pathData) return { x: 0, y: 0 };
-  const b = P.bbox(P.parse(bakedOutline(layer)));
-  return { x: b.minX, y: b.minY };
+  state.ui.selected = shape.id;
+  scheduleRender();
 }
 
-// ---- top bar: file + export ----
-function wireToolbar() {
-  $('btn-undo').addEventListener('click', undo);
-  $('btn-redo').addEventListener('click', redo);
-
-  // Privacy link opens the policy in a new tab; record the click as an
-  // anonymous TelemetryDeck signal via our own sender (the Web SDK exposes no
-  // global, so the previous window.td call was a no-op).
-  $('privacy-link').addEventListener('click', () => {
-    tdSignal('privacyLinkClicked');
+function duplicateShape() {
+  const s = selectedShape();
+  if (!s) return;
+  const id = M.newId('s');
+  edit(() => {
+    for (const v of targets()) {
+      const i = v.shapes.findIndex((x) => x.id === s.id);
+      if (i < 0) continue;
+      const copy = structuredClone(v.shapes[i]);
+      copy.id = id;
+      copy.name = `${copy.name} copy`;
+      copy.x += 4;
+      copy.y += 4;
+      v.shapes.splice(i + 1, 0, copy);
+    }
   });
-  $('changelog-link').addEventListener('click', () => {
-    tdSignal('changelogLinkClicked');
-  });
+  state.ui.selected = id;
+  scheduleRender();
+}
 
-  $('btn-new').addEventListener('click', async () => {
-    if (doc().layers.length) {
-      const ok = await confirmDialog({
-        title: 'Start a new document?',
-        message: 'Unsaved changes will be lost.',
-        confirmLabel: 'New document',
-        cancelLabel: 'Cancel',
-        danger: true,
+function deleteShape() {
+  const s = selectedShape();
+  if (!s) return;
+  edit(() => {
+    for (const v of targets()) v.shapes = v.shapes.filter((x) => x.id !== s.id);
+  });
+  state.ui.selected = null;
+  scheduleRender();
+}
+
+// Moves the shape one step up (toward the top of its layer) or down, swapping
+// with the nearest shape on the same layer.
+function moveShape(dir) {
+  const s = selectedShape();
+  if (!s) return;
+  edit(() => {
+    for (const v of targets()) {
+      const i = v.shapes.findIndex((x) => x.id === s.id);
+      if (i < 0) continue;
+      const layer = v.shapes[i].layer;
+      let j = i + dir;
+      while (j >= 0 && j < v.shapes.length && v.shapes[j].layer !== layer) j += dir;
+      if (j < 0 || j >= v.shapes.length) continue;
+      [v.shapes[i], v.shapes[j]] = [v.shapes[j], v.shapes[i]];
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// variants strip
+
+const thumbs = new Map();
+
+function renderVariants() {
+  const strip = $('variant-strip');
+  if (addCard.parentNode !== strip) strip.append(addCard);
+  const seen = new Set();
+  state.doc.variants.forEach((v, i) => {
+    seen.add(v.id);
+    let t = thumbs.get(v.id);
+    if (!t) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'variant-card';
+      const host = document.createElement('div');
+      host.className = 'thumb';
+      const inner = document.createElement('div');
+      inner.style.zoom = 86 / M.CANVAS;
+      host.append(inner);
+      const name = document.createElement('span');
+      name.className = 'vname';
+      card.append(host, name);
+      card.addEventListener('click', () => {
+        commit();
+        state.ui.variant = state.doc.variants.findIndex((x) => x.id === v.id);
+        if (!selectedShape()) state.ui.selected = null;
+        scheduleRender();
       });
-      if (!ok) return;
+      t = { card, root: mountIcon(inner), name, markup: '' };
+      thumbs.set(v.id, t);
     }
-    loadDocument({ canvas: defaultCanvas(), light: defaultLight(), layers: [] }, 'icon');
-    toast('New document.');
-    tdSignal('new');
+    const markup = stageMarkup(v);
+    if (markup !== t.markup) {
+      t.root.innerHTML = markup;
+      t.markup = markup;
+    }
+    t.name.textContent = v.name;
+    t.card.title = v.name;
+    t.card.classList.toggle('active', i === state.ui.variant);
+    if (strip.children[i] !== t.card) strip.insertBefore(t.card, strip.children[i] || addCard);
+  });
+  for (const [id, t] of thumbs) {
+    if (!seen.has(id)) {
+      t.card.remove();
+      thumbs.delete(id);
+    }
+  }
+  if (strip.lastChild !== addCard) strip.append(addCard);
+  $('btn-var-del').disabled = state.doc.variants.length < 2;
+}
+
+const addCard = document.createElement('button');
+addCard.type = 'button';
+addCard.className = 'variant-card add';
+addCard.title = 'Duplicate the current variant';
+addCard.textContent = '+';
+addCard.addEventListener('click', () => duplicateCurrentVariant());
+
+function duplicateCurrentVariant() {
+  const v = variant();
+  const copy = M.duplicateVariant(v, nextVariantName(v.name));
+  edit(() => state.doc.variants.splice(state.ui.variant + 1, 0, copy));
+  state.ui.variant += 1;
+  scheduleRender();
+}
+
+function nextVariantName(base) {
+  const names = new Set(state.doc.variants.map((v) => v.name));
+  const stem = base.replace(/\s+\d+$/, '');
+  for (let i = 2; ; i++) if (!names.has(`${stem} ${i}`)) return `${stem} ${i}`;
+}
+
+async function deleteCurrentVariant() {
+  if (state.doc.variants.length < 2) return;
+  const v = variant();
+  const ok = await confirmDialog({
+    title: `Delete “${v.name}”?`,
+    message: 'You can undo this.',
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  edit(() => state.doc.variants.splice(state.ui.variant, 1));
+  state.ui.variant = Math.max(0, state.ui.variant - 1);
+  if (!selectedShape()) state.ui.selected = null;
+  scheduleRender();
+}
+
+// ---------------------------------------------------------------------------
+// inspector controls
+
+function fmt(v, step) {
+  const decimals = step >= 1 ? 0 : Math.min(3, String(step).split('.')[1]?.length || 0);
+  return String(+(+v).toFixed(decimals));
+}
+
+function fieldRow(label, control) {
+  const row = document.createElement('label');
+  row.className = 'field';
+  const span = document.createElement('span');
+  span.textContent = label;
+  row.append(span, control);
+  return row;
+}
+
+function slider(label, { min, max, step, get, set, hue = false }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'slider';
+  const range = document.createElement('input');
+  range.type = 'range';
+  Object.assign(range, { min, max, step });
+  if (hue) range.className = 'hue-range';
+  const box = document.createElement('input');
+  box.type = 'number';
+  Object.assign(box, { min, max, step });
+  wrap.append(range, box);
+  range.addEventListener('input', () => mutate(() => set(+range.value)));
+  range.addEventListener('change', commit);
+  box.addEventListener('input', () => {
+    const n = parseFloat(box.value);
+    if (Number.isFinite(n)) mutate(() => set(Math.min(max, Math.max(min, n))));
+  });
+  box.addEventListener('change', commit);
+  const row = fieldRow(label, wrap);
+  return {
+    el: row,
+    update() {
+      const v = get();
+      range.value = v;
+      if (document.activeElement !== box) box.value = fmt(v, step);
+    },
+  };
+}
+
+function numberInput(label, { step = 1, get, set }) {
+  const box = document.createElement('input');
+  box.type = 'number';
+  box.step = step;
+  box.addEventListener('input', () => {
+    const n = parseFloat(box.value);
+    if (Number.isFinite(n)) mutate(() => set(n));
+  });
+  box.addEventListener('change', commit);
+  const lab = document.createElement('label');
+  const span = document.createElement('span');
+  span.textContent = label;
+  lab.append(span, box);
+  return {
+    el: lab,
+    update() {
+      if (document.activeElement !== box) box.value = fmt(get(), step);
+    },
+  };
+}
+
+function pair(label, a, b) {
+  const wrap = document.createElement('div');
+  wrap.className = 'pair';
+  wrap.append(a.el, b.el);
+  const row = document.createElement('div');
+  row.className = 'field';
+  const span = document.createElement('span');
+  span.textContent = label;
+  row.append(span, wrap);
+  return { el: row, update() { a.update(); b.update(); } };
+}
+
+function select(label, { options, get, set, disabled }) {
+  const sel = document.createElement('select');
+  for (const o of options) {
+    const opt = document.createElement('option');
+    opt.value = o.id;
+    opt.textContent = o.label;
+    sel.append(opt);
+  }
+  sel.addEventListener('change', () => edit(() => set(sel.value)));
+  return {
+    el: fieldRow(label, sel),
+    update() {
+      sel.value = get();
+      sel.disabled = !!disabled?.();
+    },
+  };
+}
+
+function checkbox(label, { get, set }) {
+  const lab = document.createElement('label');
+  lab.className = 'check';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  const span = document.createElement('span');
+  span.textContent = label;
+  lab.append(box, span);
+  box.addEventListener('change', () => edit(() => set(box.checked)));
+  return { el: lab, update() { box.checked = !!get(); } };
+}
+
+function text(label, { get, set }) {
+  const box = document.createElement('input');
+  box.type = 'text';
+  box.spellcheck = false;
+  box.addEventListener('input', () => mutate(() => set(box.value)));
+  box.addEventListener('change', commit);
+  return {
+    el: fieldRow(label, box),
+    update() { if (document.activeElement !== box) box.value = get(); },
+  };
+}
+
+function color(label, { get, set }) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'swatch-btn';
+  const field = createColorField(btn, {
+    onInput: (hex) => mutate(() => set(hex)),
+    onCommit: commit,
+  });
+  return { el: fieldRow(label, btn), update() { field.setValue(get()); } };
+}
+
+function lightPad() {
+  const pad = document.createElement('div');
+  pad.className = 'lightpad';
+  pad.title = 'Drag to move the light';
+  const area = document.createElement('div');
+  area.className = 'lightpad-area';
+  const dot = document.createElement('div');
+  dot.className = 'lightpad-dot';
+  area.append(dot);
+  pad.append(area);
+  const apply = (e) => {
+    const r = area.getBoundingClientRect();
+    let x = ((e.clientX - r.left) / r.width) * 2 - 1;
+    let y = ((e.clientY - r.top) / r.height) * 2 - 1;
+    x = Math.max(-1, Math.min(1, x));
+    y = Math.max(-1, Math.min(1, y));
+    if (e.shiftKey) {
+      x = Math.round(x);
+      y = Math.round(y);
+    }
+    mutate(() => forScene((sc) => { sc.lightX = round2(x); sc.lightY = round2(y); }));
+  };
+  pad.addEventListener('pointerdown', (e) => {
+    pad.setPointerCapture(e.pointerId);
+    apply(e);
+  });
+  pad.addEventListener('pointermove', (e) => { if (pad.hasPointerCapture(e.pointerId)) apply(e); });
+  pad.addEventListener('pointerup', commit);
+  return {
+    el: fieldRow('Direction', pad),
+    update() {
+      const sc = variant().scene;
+      dot.style.left = `${((sc.lightX + 1) / 2) * 100}%`;
+      dot.style.top = `${((sc.lightY + 1) / 2) * 100}%`;
+    },
+  };
+}
+
+const forScene = (fn) => { for (const v of targets()) fn(v.scene); };
+const forBackground = (fn) => { for (const v of targets()) fn(v.background); };
+
+function section(title, controls, { advanced = [] } = {}) {
+  const el = document.createElement('section');
+  el.className = 'insp-section';
+  const h = document.createElement('h2');
+  h.textContent = title;
+  el.append(h, ...controls.map((c) => c.el));
+  let all = controls;
+  if (advanced.length) {
+    const det = document.createElement('details');
+    det.className = 'advanced';
+    const sum = document.createElement('summary');
+    sum.textContent = 'Advanced';
+    const body = document.createElement('div');
+    body.className = 'adv-body';
+    body.append(...advanced.map((c) => c.el));
+    det.append(sum, body);
+    el.append(det);
+    all = [...controls, ...advanced];
+  }
+  return { el, update() { for (const c of all) c.update(); } };
+}
+
+function buildInspector(root) {
+  const sh = () => selectedShape();
+  const shapeSet = (fn) => (v) => forShape(state.ui.selected, (s) => fn(s, v));
+  const styleCtl = (key) => ({
+    get: () => sh().style[key],
+    set: shapeSet((s, v) => { s.style[key] = v; }),
+  });
+  const geoCtl = (key) => ({
+    get: () => sh()[key],
+    set: shapeSet((s, v) => { s[key] = key === 'w' || key === 'h' ? Math.max(1, v) : v; }),
   });
 
-  // Both pickers sniff the file and route by content, so a project opened via
-  // Import (or a vector "opened") still does the right thing. `prefer` only
-  // breaks ties for ambiguous files.
-  $('file-open').addEventListener('change', (e) => handleFile(e, 'project'));
-  $('file-import').addEventListener('change', (e) => handleFile(e, 'vector'));
+  const variantSec = section('Variant', [
+    text('Name', { get: () => variant().name, set: (v) => { variant().name = v; } }),
+  ]);
 
-  $('btn-save').addEventListener('click', saveProject);
+  const lightSec = section('Light', [
+    lightPad(),
+    slider('Key light', { min: 0, max: 1, step: 0.01, get: () => variant().scene.key, set: (v) => forScene((s) => { s.key = v; }) }),
+    slider('Fill light', { min: 0, max: 1, step: 0.01, get: () => variant().scene.fill, set: (v) => forScene((s) => { s.fill = v; }) }),
+  ], {
+    advanced: [
+      slider('Light hue', { min: 0, max: 360, step: 1, hue: true, get: () => variant().scene.hue, set: (v) => forScene((s) => { s.hue = v; }) }),
+      slider('Light tint', { min: 0, max: 100, step: 1, get: () => variant().scene.saturation, set: (v) => forScene((s) => { s.saturation = v; }) }),
+      pair('Direction',
+        numberInput('X', { step: 0.01, get: () => variant().scene.lightX, set: (v) => forScene((s) => { s.lightX = Math.max(-1, Math.min(1, v)); }) }),
+        numberInput('Y', { step: 0.01, get: () => variant().scene.lightY, set: (v) => forScene((s) => { s.lightY = Math.max(-1, Math.min(1, v)); }) })),
+    ],
+  });
 
-  // Save As + picker-based Open + Watch only exist where the File System Access
-  // API does; otherwise these stay hidden and Open uses the <input> label.
-  const btnSaveAs = $('btn-save-as');
-  if (btnSaveAs && canPick) {
-    btnSaveAs.hidden = false;
-    btnSaveAs.addEventListener('click', saveProjectAs);
+  const bgSec = section('Background', [
+    color('Color', { get: () => variant().background.color, set: (v) => forBackground((b) => { b.color = v; }) }),
+    checkbox('Shaded by the light', { get: () => variant().background.lit, set: (v) => forBackground((b) => { b.lit = v; }) }),
+    checkbox('No background (transparent)', { get: () => variant().background.transparent, set: (v) => forBackground((b) => { b.transparent = v; }) }),
+  ]);
+
+  const shapeSec = section('Shape', [
+    text('Name', { get: () => sh().name, set: shapeSet((s, v) => { s.name = v; }) }),
+    select('Layer', { options: M.LAYERS, ...geoCtl('layer') }),
+    select('Kind', {
+      options: [{ id: 'rect', label: 'Rectangle' }, { id: 'ellipse', label: 'Ellipse' }],
+      ...geoCtl('kind'),
+    }),
+    pair('Position', numberInput('X', { step: 0.5, ...geoCtl('x') }), numberInput('Y', { step: 0.5, ...geoCtl('y') })),
+    pair('Size', numberInput('W', { step: 0.5, ...geoCtl('w') }), numberInput('H', { step: 0.5, ...geoCtl('h') })),
+    slider('Corner radius', { min: 0, max: 54, step: 0.5, ...geoCtl('radius') }),
+    slider('Rotation', { min: -180, max: 180, step: 1, ...geoCtl('rotation') }),
+  ]);
+
+  const lookSec = section('Look', [
+    color('Color', styleCtl('color')),
+    select('Material', { options: M.MATERIALS, ...styleCtl('material') }),
+    select('Surface', { options: M.SURFACES, ...styleCtl('surface'), disabled: () => sh().style.material === 'glass' }),
+    slider('Elevation', { min: 0, max: 3, step: 0.05, ...styleCtl('elevation') }),
+    slider('Thickness', { min: 0, max: 2, step: 0.05, ...styleCtl('thickness') }),
+    checkbox('Rounded edge (fillet)', styleCtl('fillet')),
+    checkbox('Beveled edge (chamfer)', styleCtl('chamfer')),
+    slider('Opacity', { min: 0, max: 1, step: 0.01, ...styleCtl('opacity') }),
+  ], {
+    advanced: [
+      slider('Fillet width', { min: -2, max: 2, step: 0.1, ...styleCtl('filletWidth') }),
+      slider('Chamfer width', { min: -2, max: 2, step: 0.1, ...styleCtl('chamferWidth') }),
+      slider('Shade', { min: 0, max: 2, step: 0.01, ...styleCtl('shade') }),
+      slider('Curve depth', { min: 0, max: 4, step: 0.05, ...styleCtl('curveScale') }),
+      slider('Grain', { min: 0, max: 3, step: 0.05, ...styleCtl('grain') }),
+      checkbox('Glow', styleCtl('glow')),
+      color('Glow color', styleCtl('glowColor')),
+      slider('Glow size', { min: 0, max: 30, step: 0.5, ...styleCtl('glowSize') }),
+    ],
+  });
+
+  root.append(shapeSec.el, lookSec.el, variantSec.el, lightSec.el, bgSec.el);
+  return {
+    update() {
+      const has = !!sh();
+      shapeSec.el.hidden = !has;
+      lookSec.el.hidden = !has;
+      if (has) {
+        shapeSec.update();
+        lookSec.update();
+      }
+      variantSec.update();
+      lightSec.update();
+      bgSec.update();
+    },
+  };
+}
+
+let inspector = { update() {} };
+
+// ---------------------------------------------------------------------------
+// files
+
+function toast(message, kind = '') {
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.textContent = message;
+  document.body.append(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+async function newDocument() {
+  const ok = await confirmDialog({
+    title: 'Start a new icon?',
+    message: 'The current icon is replaced. Save it first if you want to keep it.',
+    confirmLabel: 'New icon',
+  });
+  if (!ok) return;
+  const doc = M.newDocument();
+  doc.variants[0].shapes.push(M.newShape('rect', { name: 'Plate', x: 16, y: 16, w: 76, h: 76, radius: 22 }));
+  loadDocument(doc);
+}
+
+function saveProject() {
+  commit();
+  const blob = new Blob([M.serializeProject(state.doc)], { type: 'application/json' });
+  download(blob, `${M.slug(state.doc.name)}.icjson`);
+}
+
+async function openFile(file) {
+  try {
+    loadDocument(M.parseProject(await file.text()));
+    toast(`Opened ${file.name}`);
+  } catch (err) {
+    toast(err.message, 'error');
   }
-  if (canPick) {
-    const openLabel = document.querySelector('label[for="file-open"]');
-    if (openLabel) openLabel.addEventListener('click', (e) => { e.preventDefault(); openViaPicker(); });
-  }
-  setupWatch();
+}
 
-  // Export dropdown
-  const menu = $('export-menu');
-  $('btn-export').addEventListener('click', (e) => {
+// ---------------------------------------------------------------------------
+// export dialog
+
+const exportUi = { presetBoxes: new Map(), previewTimer: 0, running: false };
+
+function loadExportPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(EXPORT_PREFS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveExportPrefs(prefs) {
+  try {
+    localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify(prefs));
+  } catch { /* per-viewer convenience only */ }
+}
+
+function setupExportDialog() {
+  const presetsEl = $('ex-presets');
+  for (const p of PRESETS) {
+    const lab = document.createElement('label');
+    lab.className = 'check';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = p.id;
+    const span = document.createElement('span');
+    span.textContent = p.label;
+    lab.append(box, span);
+    presetsEl.append(lab);
+    exportUi.presetBoxes.set(p.id, box);
+  }
+  for (const r of REGIONS) $('ex-region').add(new Option(r.label, r.id));
+  for (const m of MASKS) $('ex-mask').add(new Option(m.label, m.id));
+
+  const prefs = loadExportPrefs();
+  for (const [id, box] of exportUi.presetBoxes) box.checked = (prefs.presets || ['play']).includes(id);
+  $('ex-custom').value = prefs.custom || '';
+  $('ex-region').value = prefs.region || 'full';
+  $('ex-mask').value = prefs.mask || 'none';
+  $('ex-transparent').checked = !!prefs.transparent;
+
+  const overlay = $('export-overlay');
+  overlay.addEventListener('input', updateExportSummary);
+  overlay.addEventListener('change', updateExportSummary);
+  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) closeExport(); });
+  overlay.addEventListener('keydown', (e) => {
     e.stopPropagation();
-    menu.hidden = !menu.hidden;
+    if (e.key === 'Escape') closeExport();
   });
-  document.addEventListener('click', () => { menu.hidden = true; });
-  menu.addEventListener('click', (e) => {
-    const action = e.target.dataset && e.target.dataset.export;
-    if (action) doExport(action);
-  });
+  $('ex-cancel').addEventListener('click', closeExport);
+  $('ex-go').addEventListener('click', doExport);
 }
 
-// A project file is JSON with our magic id; a vector is SVG/VD markup.
-function looksLikeProject(text, filename) {
-  if (/"format"\s*:\s*"icon-emboss"/.test(text)) return true;
-  if (/\.json$/i.test(filename)) {
-    try { return JSON.parse(text) && typeof JSON.parse(text) === 'object'; } catch (_) { return false; }
-  }
-  return false;
-}
-function looksLikeVector(text, filename) {
-  return /<\s*svg[\s>]/i.test(text) || /<\s*vector[\s>]/i.test(text) || /\.(svg|xml)$/i.test(filename);
-}
-
-// Single entry for both Open and Import — detect kind, route, and tell the user
-// when it didn't match the button they pressed (Open vs Import, PLAN §7). The
-// <input> path can't expose a file handle, so it routes with handle = null.
-async function handleFile(e, prefer) {
-  const file = e.target.files[0];
-  e.target.value = '';
-  if (!file) return;
-  await routeOpenedContent(await file.text(), file.name, prefer, null);
+function exportSettings() {
+  return {
+    scope: document.querySelector('input[name="ex-variants"]:checked').value,
+    presets: [...exportUi.presetBoxes].filter(([, b]) => b.checked).map(([id]) => id),
+    custom: $('ex-custom').value,
+    region: $('ex-region').value,
+    mask: $('ex-mask').value,
+    transparent: $('ex-transparent').checked,
+  };
 }
 
-// Shared open routing for the <input> fallback, the File System Access picker,
-// and launchQueue. The latter two also pass a FileSystemFileHandle so Save can
-// overwrite the file and the watcher can poll it; projects bind to it, vectors
-// (import) don't (you can't watch an appended vector).
-async function routeOpenedContent(text, name, prefer, handle) {
-  const isProject = looksLikeProject(text, name);
-  const isVector = !isProject && looksLikeVector(text, name);
-  const kind = isProject ? 'project' : isVector ? 'vector' : prefer;
-
-  if (kind === 'project') {
-    const res = parseProject(text);
-    if (!res.ok) { tdError(res.error, 'open'); return toast(res.error, 'error'); }
-    loadDocument(res.document, res.name); // clears the previous handle (and watch)
-    setCurrentHandle(handle || null); // bind to the on-disk file, if we have one
-    toast(prefer === 'vector' ? `That's a project file — opened "${res.name}".` : `Opened "${res.name}".`);
-    tdSignal('open');
-  } else {
-    const res = importVector(text, name);
-    if (!res.ok) { tdError(res.error, 'import'); return toast(res.error, 'error'); }
-    importLayers(res, name, prefer === 'project');
-  }
+function exportJobs(s) {
+  const variants = s.scope === 'all' ? state.doc.variants : [variant()];
+  return planExport(state.doc.name, { variants, presets: s.presets, customSizes: parseCustomSizes(s.custom) });
 }
 
-// Open through the File System Access picker (Chromium) so we keep a handle for
-// Save/Watch. Accepts projects and vectors (vectors route to import). Falls back
-// to the hidden <input> on unsupported browsers via the Open label's default.
-async function openViaPicker() {
-  try {
-    const [handle] = await window.showOpenFilePicker({
-      types: [
-        { description: 'Icon Recomposer project', accept: { 'application/x-icon-recomposer+json': ['.icjson', '.json'] } },
-        { description: 'Vector artwork (SVG / VectorDrawable)', accept: { 'image/svg+xml': ['.svg'], 'application/xml': ['.xml'] } },
-      ],
-    });
-    if (!handle) return;
-    const file = await handle.getFile();
-    await routeOpenedContent(await file.text(), handle.name, 'project', handle);
-  } catch (err) {
-    if (err && err.name === 'AbortError') return; // user cancelled the picker
-    console.error(err);
-    toast('Could not open the file: ' + (err.message || err), 'error');
-  }
+function openExport() {
+  commit();
+  $('ex-all-label').textContent = `All variants (${state.doc.variants.length})`;
+  $('export-overlay').hidden = false;
+  $('ex-go').focus();
+  updateExportSummary();
 }
 
-function importLayers(res, filename, viaOpen) {
-  commit(() => {
-    const d = doc();
-    if (d.layers.length === 0 && res.viewport) {
-      d.canvas.viewportWidth = d.canvas.width = res.viewport.width;
-      d.canvas.viewportHeight = d.canvas.height = res.viewport.height;
-      d.light.position = { x: res.viewport.width * 0.35, y: res.viewport.height * 0.3 };
-    }
-    d.layers.push(...res.layers);
-  });
-  if (res.layers.length) {
-    appState.ui.selectedLayerIds = [res.layers[0].id];
-    appState.ui.primaryLayerId = res.layers[0].id;
-    appState.ui.selectAnchorId = res.layers[0].id;
-  }
-  const warn = res.warnings && res.warnings.length;
-  const prefix = viaOpen ? `That's a vector file — ` : '';
-  toast(`${prefix}Imported ${res.layers.length} layer${res.layers.length === 1 ? '' : 's'} from ${filename}.` + (warn ? ` (${res.warnings.length} warning${res.warnings.length === 1 ? '' : 's'})` : ''), warn ? 'warn' : '');
-  if (warn) console.warn('Import warnings:', res.warnings);
-  scheduleRender();
-  tdSignal('import', { layers: res.layers.length });
+function closeExport() {
+  if (exportUi.running) return;
+  $('export-overlay').hidden = true;
 }
 
-async function doExport(action) {
-  $('export-menu').hidden = true;
-  const d = doc();
-  const derived = derive(d);
-  try {
-    if (action === 'vd') {
-      const xml = exportVD(derived, d.canvas);
-      download(new Blob([xml], { type: 'text/xml' }), exportName('vd', 'xml'));
-      toast('Exported VectorDrawable XML.');
-    } else if (action === 'svg') {
-      const svg = standaloneSvg(derived, d.canvas.viewportWidth, d.canvas.viewportHeight, { background: true });
-      download(new Blob([svg], { type: 'image/svg+xml' }), exportName('svg', 'svg'));
-      toast('Exported SVG.');
-    } else if (action === 'project') {
-      downloadProject();
-      toast('Downloaded project file.');
-    } else if (action === 'png-transparent' || action === 'png-bg') {
-      const size = d.canvas.pngSize || 1024;
-      const withBg = action === 'png-bg';
-      const background = withBg ? { transparent: false, color: d.canvas.exportBackground.color } : { transparent: true };
-      const blob = await renderPng(derived, size, background);
-      download(blob, exportName(withBg ? 'iwb' : 'iwt', 'png'));
-      toast(`Exported PNG (${size}px).`);
-    } else if (action === 'share') {
-      const url = location.origin + location.pathname + '#' + encodeShareFragment(d, appState.ui.projectName);
-      if (url.length > 30000) {
-        toast('Icon is too large for a share link — use Save instead.', 'warn');
-        return;
-      }
-      await navigator.clipboard.writeText(url);
-      toast('Share link copied to clipboard.');
-    }
-    // Reached only on success (failures throw; share-too-large returns early).
-    tdSignal('export', { format: action });
-  } catch (err) {
-    console.error(err);
-    toast('Export failed: ' + (err.message || err), 'error');
-    tdError(err, 'export:' + action);
-  }
-}
-
-function loadDocument(rawDoc, name) {
-  appState.document = normalizeDocument(rawDoc);
-  appState.ui.selectedLayerIds = [];
-  appState.ui.primaryLayerId = null;
-  appState.ui.selectAnchorId = null;
-  appState.ui.projectName = name || 'icon';
-  appState.ui.view = { scale: 1, panX: 0, panY: 0 }; // reset zoom/pan on load
-  $('doc-name').value = appState.ui.projectName;
-  undoStack.length = 0;
-  redoStack.length = 0;
-  gestureSnapshot = null;
-  // A freshly loaded document is not bound to a file (stops any active watch);
-  // routeOpenedContent re-binds it right after for a project opened from disk.
-  setCurrentHandle(null);
-  updateHistoryButtons();
-  saveSession();
-  scheduleRender();
-}
-
-// ---- file binding + external-edit watching (File System Access API) ----
-// Opt-in: opening a file just loads it; the user clicks "Watch external edits"
-// to start polling, and any in-app edit stops it (see commit/commitGesture).
-
-// Bind the document to an on-disk file (or null). Switching files stops any
-// active watch (silently — a new file replaced the watched one).
-function setCurrentHandle(handle) {
-  if (watchTimer) stopWatch('switch');
-  currentHandle = handle || null;
-  updateWatchButton();
-}
-
-function updateWatchButton() {
-  const btn = $('btn-watch');
-  if (!btn) return;
-  const watching = !!watchTimer;
-  btn.disabled = !currentHandle && !watching;
-  btn.setAttribute('aria-pressed', watching ? 'true' : 'false');
-  btn.textContent = watching ? 'Watching…' : 'Watch external edits';
-  btn.title = !currentHandle
-    ? 'Open a project file to watch it for external changes'
-    : watching
-    ? 'Stop watching the file for external changes'
-    : 'Reload the open file when an external program changes it';
-}
-
-function setupWatch() {
-  const btn = $('btn-watch');
-  if (!btn || !fsaSupported) return; // unsupported → button stays hidden
-  btn.hidden = false;
-  btn.addEventListener('click', () => { if (watchTimer) stopWatch('user'); else startWatch(); });
-  updateWatchButton();
-  window.dispatchEvent(new Event('resize')); // let the toolbar overflow re-measure
-}
-
-async function startWatch() {
-  if (!currentHandle || watchTimer) return;
-  try {
-    if (currentHandle.queryPermission) {
-      let perm = await currentHandle.queryPermission({ mode: 'read' });
-      if (perm === 'prompt' && currentHandle.requestPermission) perm = await currentHandle.requestPermission({ mode: 'read' });
-      if (perm === 'denied') return toast('Permission to read the file was denied.', 'error');
-    }
-    watchLastMod = (await currentHandle.getFile()).lastModified;
-  } catch (err) {
-    console.error(err);
-    return toast('Could not access the file to watch it.', 'error');
-  }
-  watchTimer = setInterval(pollWatch, WATCH_MS);
-  updateWatchButton();
-  toast(`Watching "${appState.ui.projectName}" — external edits reload here.`);
-  tdSignal('watchStart');
-}
-
-function stopWatch(reason) {
-  if (!watchTimer) return;
-  clearInterval(watchTimer);
-  watchTimer = null;
-  watchPolling = false;
-  updateWatchButton();
-  if (reason === 'edited') toast('Stopped watching — you edited the icon here.');
-  else if (reason === 'lost') toast('Lost access to the file — stopped watching.', 'warn');
-  else if (reason === 'user') toast('Stopped watching for external edits.');
-  // 'switch' is silent (a newly opened file replaced the watched one).
-  if (reason !== 'switch') tdSignal('watchStop', { reason });
-}
-
-async function pollWatch() {
-  if (watchPolling || !currentHandle) return;
-  watchPolling = true;
-  try {
-    const file = await currentHandle.getFile();
-    if (file.lastModified > watchLastMod) {
-      const res = parseProject(await file.text());
-      if (res.ok) {
-        watchLastMod = file.lastModified;
-        reloadFromWatch(res);
-      }
-      // A parse failure here is almost always a half-written file mid-save: leave
-      // watchLastMod untouched so the next tick retries once the writer finishes.
-    }
-  } catch (err) {
-    console.error(err);
-    stopWatch('lost');
-  } finally {
-    watchPolling = false;
-  }
-}
-
-// Lighter than loadDocument: reflects external changes while PRESERVING the
-// current zoom/pan and selection, and stays silent (the live canvas is the
-// feedback). Watching has already stopped any in-app edits, so clearing the
-// undo history is safe — the file is the source of truth.
-function reloadFromWatch(res) {
-  appState.document = res.document; // already normalized by parseProject
-  appState.ui.projectName = res.name;
-  $('doc-name').value = res.name;
-  reconcileSelection();
-  undoStack.length = 0;
-  redoStack.length = 0;
-  gestureSnapshot = null;
-  updateHistoryButtons();
-  saveSession();
-  scheduleRender();
-}
-
-// ---- save (overwrite bound file) + save as (new file) ----
-// The current download behavior, kept as the universal fallback.
-function downloadProject() {
-  const json = serializeProject(doc(), appState.ui.projectName);
-  download(new Blob([json], { type: 'application/json' }), exportName('', 'icjson'));
-}
-
-async function writeHandle(handle) {
-  const json = serializeProject(doc(), appState.ui.projectName);
-  const writable = await handle.createWritable();
-  await writable.write(json);
-  await writable.close();
-  // Don't let the watcher (if running) reload from our own write.
-  if (watchTimer) { try { watchLastMod = (await handle.getFile()).lastModified; } catch (_) {} }
-}
-
-// Lazily upgrade an opened (read) handle to read-write on the Save user gesture.
-async function ensureWritable(handle) {
-  if (!handle.queryPermission) return true; // assume writable on older impls
-  if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') return true;
-  if (!handle.requestPermission) return false;
-  return (await handle.requestPermission({ mode: 'readwrite' })) === 'granted';
-}
-
-// Save: overwrite the bound file; on no handle or refused permission, download a
-// copy like before and tell the user why.
-async function saveProject() {
-  if (currentHandle) {
-    let granted = false;
-    try { granted = await ensureWritable(currentHandle); } catch (_) { granted = false; }
-    if (!granted) {
-      downloadProject();
-      toast('Permission to edit the file was denied — downloaded a copy instead.', 'warn');
-      return tdSignal('save', { mode: 'download-denied' });
-    }
+function updateExportSummary() {
+  const s = exportSettings();
+  const jobs = exportJobs(s);
+  const images = jobs.filter((j) => j.text === undefined).length;
+  const extra = jobs.length - images;
+  $('ex-summary').textContent = jobs.length
+    ? `${images} PNG${images === 1 ? '' : 's'}${extra ? ` + ${extra} XML` : ''}${jobs.length > 1 ? ', downloaded as one zip.' : '.'}`
+    : 'Pick at least one size.';
+  $('ex-go').disabled = !jobs.length;
+  clearTimeout(exportUi.previewTimer);
+  exportUi.previewTimer = setTimeout(async () => {
     try {
-      await writeHandle(currentHandle);
-      toast('Saved.');
-      tdSignal('save', { mode: 'overwrite' });
+      const canvas = await renderCanvas(variant(), {
+        size: 400, region: s.region, mask: s.mask, transparent: s.transparent,
+      });
+      $('ex-preview').src = canvas.toDataURL('image/png');
     } catch (err) {
-      console.error(err);
-      downloadProject();
-      toast('Could not write the file — downloaded a copy instead.', 'warn');
-      tdSignal('save', { mode: 'download-error' });
+      $('ex-summary').textContent = `Preview failed: ${err.message}`;
     }
+  }, 120);
+}
+
+async function doExport() {
+  const s = exportSettings();
+  const jobs = exportJobs(s);
+  if (!jobs.length) return;
+  saveExportPrefs({ presets: s.presets, custom: s.custom, region: s.region, mask: s.mask, transparent: s.transparent });
+  const btn = $('ex-go');
+  exportUi.running = true;
+  btn.disabled = true;
+  try {
+    const out = await runExport(state.doc.name, jobs, {
+      region: s.region, mask: s.mask, transparent: s.transparent,
+    }, (i, n) => { btn.textContent = `Exporting ${i}/${n}…`; });
+    download(out.blob, out.filename);
+    exportUi.running = false;
+    closeExport();
+    toast(`Exported ${out.filename}`);
+  } catch (err) {
+    toast(`Export failed: ${err.message}`, 'error');
+  } finally {
+    exportUi.running = false;
+    btn.textContent = 'Export';
+    btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// keyboard
+
+function isTyping(e) {
+  const t = e.target;
+  return t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+}
+
+function onKey(e) {
+  if (isDialogOpen() || !$('export-overlay').hidden) return;
+  const mod = e.ctrlKey || e.metaKey;
+  const k = e.key.toLowerCase();
+  if (mod && k === 's') { e.preventDefault(); saveProject(); return; }
+  if (mod && k === 'o') { e.preventDefault(); $('file-open').click(); return; }
+  if (isTyping(e)) {
+    if (e.key === 'Escape') e.target.blur();
     return;
   }
-  downloadProject(); // nothing bound → behave like today
-  tdSignal('save', { mode: 'download' });
-}
-
-// Save As: pick a new file (Chromium) and bind to it; the picker grants
-// read-write, so no separate permission prompt. Falls back to a download.
-async function saveProjectAs() {
-  if (!canPick) { downloadProject(); return tdSignal('save', { mode: 'download' }); }
-  let handle;
-  try {
-    handle = await window.showSaveFilePicker({
-      suggestedName: fileBase() + '.icjson',
-      types: [{ description: 'Icon Recomposer project', accept: { 'application/x-icon-recomposer+json': ['.icjson'] } }],
-    });
-  } catch (err) {
-    if (err && err.name === 'AbortError') return; // user cancelled
-    console.error(err);
-    downloadProject();
-    toast('Could not save the file — downloaded a copy instead.', 'warn');
-    return tdSignal('save', { mode: 'download-error' });
-  }
-  // Adopt the chosen filename as the document name BEFORE writing so the file's
-  // own `name` field matches.
-  const base = handle.name.replace(/\.(icjson|json)$/i, '');
-  if (base) { appState.ui.projectName = base; $('doc-name').value = base; }
-  try {
-    await writeHandle(handle);
-    setCurrentHandle(handle);
-    saveSession();
-    toast(`Saved as "${handle.name}".`);
-    tdSignal('save', { mode: 'saveas' });
-  } catch (err) {
-    console.error(err);
-    downloadProject();
-    toast('Could not save the file — downloaded a copy instead.', 'warn');
-    tdSignal('save', { mode: 'download-error' });
-  }
-}
-
-// ---- helpers ----
-// Sanitize the document name into a safe download filename base.
-function fileBase() {
-  const safe = (appState.ui.projectName || '').replace(/[\/\\?%*:|"<>\x00-\x1f]+/g, '-').replace(/\s+/g, ' ').trim();
-  return safe || 'icon';
-}
-// Build an export filename: "<name>-<suffix>.<ext>" (no suffix → "<name>.<ext>").
-// Suffixes: vd (VectorDrawable), svg, iwb (png w/ background), iwt (png transparent).
-function exportName(suffix, ext) {
-  return `${fileBase()}${suffix ? '-' + suffix : ''}.${ext}`;
-}
-
-function download(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-let toastTimer = null;
-function toast(msg, kind = '') {
-  const el = $('toast');
-  el.textContent = msg;
-  el.className = 'toast' + (kind ? ' ' + kind : '');
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 3200);
-}
-
-function clamp(v, lo, hi) {
-  return v < lo ? lo : v > hi ? hi : v;
-}
-function clampNum(v, lo, hi, fallback) {
-  if (!isFinite(v)) return fallback;
-  return clamp(v, lo, hi);
-}
-function round2(v) {
-  return Math.round(v * 100) / 100;
-}
-
-// ---- keyboard ----
-document.addEventListener('keydown', (e) => {
-  const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
-  else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
-  else if (mod && e.key.toLowerCase() === 'd' && appState.ui.selectedLayerIds.length) { e.preventDefault(); duplicateLayers(appState.ui.selectedLayerIds.slice()); }
-  // Ctrl/Cmd+S = Save, Ctrl/Cmd+Shift+S = Save As, Ctrl/Cmd+O = Open
-  // (preventDefault overrides the browser's Save-page / Open-file defaults).
-  else if (mod && e.key.toLowerCase() === 's' && e.shiftKey) { e.preventDefault(); saveProjectAs(); }
-  else if (mod && e.key.toLowerCase() === 's' && !e.shiftKey) { e.preventDefault(); saveProject(); }
-  else if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); if (canPick) openViaPicker(); else $('file-open').click(); }
-  else if ((e.key === 'Delete' || e.key === 'Backspace') && appState.ui.selectedLayerIds.length) {
-    const tag = (document.activeElement && document.activeElement.tagName) || '';
-    if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
-      e.preventDefault();
-      deleteSelected();
-    }
-  } else if (e.key === 'Escape') {
-    // An open color popover / dialog consumes Escape itself (they stop the event
-    // before it reaches here). If a field is focused, Escape first leaves the
-    // field; a second press then clears the selection.
-    if (isDialogOpen()) return;
-    const el = document.activeElement;
-    const tag = (el && el.tagName) || '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') { el.blur(); return; }
-    if (appState.ui.selectedLayerIds.length) { e.preventDefault(); selectLayer(null); }
-  }
-});
-
-// ---- toolbar overflow (priority+ menu) ----
-// As the bar narrows, the lowest-priority items (data-priority; smaller = goes
-// first) move into a "⋯" dropdown so the toolbar always stays on one line
-// instead of wrapping/stacking messily. Items are the real DOM nodes (listeners
-// intact), moved between the toolbar and the menu.
-function setupToolbarOverflow() {
-  const toolbar = document.querySelector('.toolbar');
-  const moreWrap = $('more-dropdown');
-  const moreBtn = $('btn-more');
-  const moreMenu = $('more-menu');
-  const spacer = toolbar.querySelector('.spacer');
-  const original = Array.from(toolbar.children); // stable original order (incl. spacer, moreWrap)
-  const collapsible = original
-    .filter((el) => el.dataset && el.dataset.priority)
-    .sort((a, b) => +a.dataset.priority - +b.dataset.priority); // lowest priority collapses first
-
-  // Overflow test independent of the flex spacer: hide it, then compare the
-  // packed content width to the toolbar's width.
-  function fits() {
-    spacer.style.display = 'none';
-    const ok = toolbar.scrollWidth <= toolbar.clientWidth + 1;
-    spacer.style.display = '';
-    return ok;
-  }
-
-  function layout() {
-    // Restore everything to the toolbar in original order (pulls items back out
-    // of the menu), then collapse from scratch.
-    for (const el of original) toolbar.appendChild(el);
-    moreMenu.hidden = true;
-    moreWrap.hidden = true;
-    if (fits()) return;
-    moreWrap.hidden = false; // the ⋯ button itself takes width
-    for (const el of collapsible) {
-      if (fits()) break;
-      moreMenu.appendChild(el);
-    }
-    if (!moreMenu.children.length) moreWrap.hidden = true;
-  }
-
-  let scheduled = false;
-  const schedule = () => {
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(() => { scheduled = false; layout(); });
-  };
-  window.addEventListener('resize', schedule);
-  moreBtn.addEventListener('click', (e) => { e.stopPropagation(); moreMenu.hidden = !moreMenu.hidden; });
-  document.addEventListener('click', () => { moreMenu.hidden = true; });
-
-  layout();
-}
-
-// ---- PWA service worker ----
-// Registered as sw.js?v=<APP_VERSION> so each release is a distinct worker URL
-// (the browser installs the new one and we version the cache by it). When an
-// updated worker finishes installing, prompt to reload; on accept we tell it to
-// take over and reload once it controls the page.
-function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
-  let updateAccepted = false;
-  // Reload only after the user accepted an update — ignore the initial control
-  // hand-off on first install (clients.claim) so we don't reload on first visit.
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (updateAccepted) window.location.reload();
-  });
-  async function promptUpdate(worker) {
-    const ok = await confirmDialog({
-      title: 'Update available',
-      message: 'A new version of Icon Recomposer is ready. Reload to update?',
-      confirmLabel: 'Reload',
-      cancelLabel: 'Later',
-    });
-    if (ok) { updateAccepted = true; worker.postMessage('SKIP_WAITING'); }
-  }
-  navigator.serviceWorker
-    .register('sw.js?v=' + APP_VERSION)
-    .then((reg) => {
-      if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting);
-      reg.addEventListener('updatefound', () => {
-        const nw = reg.installing;
-        if (!nw) return;
-        nw.addEventListener('statechange', () => {
-          // 'installed' with an existing controller ⇒ an update (not first install).
-          if (nw.state === 'installed' && navigator.serviceWorker.controller) promptUpdate(nw);
-        });
-      });
-    })
-    .catch((err) => console.warn('Service worker registration failed:', err));
-}
-
-// ---- install (PWA) ----
-// Show an "Install" button only when the browser offers installation, and only
-// run the native install on an explicit click — no automatic prompt/banner.
-function setupInstall() {
-  const btn = $('btn-install');
-  if (!btn) return;
-  let deferred = null;
-  // Capturing this event (and preventing default) suppresses the browser's own
-  // auto install prompt; we surface our button instead.
-  window.addEventListener('beforeinstallprompt', (e) => {
+  if (mod && k === 'z') { e.preventDefault(); (e.shiftKey ? redo : undo)(); return; }
+  if (mod && k === 'y') { e.preventDefault(); redo(); return; }
+  if (mod && k === 'd') { e.preventDefault(); duplicateShape(); return; }
+  if (e.key === 'Escape') { state.ui.selected = null; scheduleRender(); return; }
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteShape(); return; }
+  const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  const s = selectedShape();
+  if (arrows[e.key] && s) {
     e.preventDefault();
-    deferred = e;
-    btn.hidden = false;
-    window.dispatchEvent(new Event('resize')); // let the toolbar overflow re-measure
-  });
-  btn.addEventListener('click', async () => {
-    if (!deferred) return;
-    deferred.prompt(); // native install dialog — only on this explicit click
-    let outcome = 'unknown';
-    try { outcome = (await deferred.userChoice).outcome; } catch (_) {}
-    tdSignal('installPrompt', { outcome });
-    deferred = null;
-    btn.hidden = true; // the event is single-use
-    window.dispatchEvent(new Event('resize'));
-  });
-  // Installed (via our button or the browser UI) → hide the button for good.
-  window.addEventListener('appinstalled', () => {
-    deferred = null;
-    btn.hidden = true;
-    window.dispatchEvent(new Event('resize'));
-    tdSignal('appInstalled');
-  });
+    const step = e.shiftKey ? 10 : 1;
+    const [dx, dy] = arrows[e.key];
+    edit(() => forShape(s.id, (x) => { x.x = round2(s.x + dx * step); x.y = round2(s.y + dy * step); }));
+  }
 }
 
-// ---- init ----
-const DEFAULT_PROJECT_URL = 'assets/' + encodeURIComponent('app icon.json');
+// ---------------------------------------------------------------------------
+// wiring
 
 async function init() {
-  $('app-version').textContent = 'v' + APP_VERSION;
-  wireControls();
-  wireToolbar();
-  setupToolbarOverflow();
-  updateHistoryButtons();
-  registerServiceWorker();
-  setupInstall();
+  $('app-version').textContent = `v${M.APP_VERSION}`;
+  sheet = await iconSheet();
+  stageRoot = mountIcon($('stage-host'));
+  inspector = buildInspector($('inspector'));
 
-  // File Handling API: when the installed PWA is launched by double-clicking a
-  // .icjson file, open it (with its handle, so Save/Watch work). Opt-in: this
-  // does NOT auto-start watching. An ordinary launch delivers no files → no-op,
-  // so the default/session/share load below still runs.
-  if ('launchQueue' in window && 'setConsumer' in window.launchQueue) {
-    launchQueue.setConsumer(async (params) => {
-      if (!params || !params.files || !params.files.length) return;
-      try {
-        const handle = params.files[0];
-        const file = await handle.getFile();
-        await routeOpenedContent(await file.text(), handle.name, 'project', handle);
-      } catch (err) {
-        console.error(err);
-        toast('Could not open the file.', 'error');
-      }
-    });
-  }
+  $('doc-name').addEventListener('input', (e) => mutate(() => { state.doc.name = e.target.value; }));
+  $('doc-name').addEventListener('change', commit);
+  $('btn-new').addEventListener('click', newDocument);
+  $('btn-open').addEventListener('click', () => $('file-open').click());
+  $('file-open').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (f) openFile(f);
+  });
+  $('btn-save').addEventListener('click', saveProject);
+  $('btn-undo').addEventListener('click', undo);
+  $('btn-redo').addEventListener('click', redo);
+  $('btn-export').addEventListener('click', openExport);
+  $('btn-add-rect').addEventListener('click', () => addShape('rect'));
+  $('btn-add-ellipse').addEventListener('click', () => addShape('ellipse'));
+  $('btn-shape-up').addEventListener('click', () => moveShape(1));
+  $('btn-shape-down').addEventListener('click', () => moveShape(-1));
+  $('btn-shape-dup').addEventListener('click', duplicateShape);
+  $('btn-shape-del').addEventListener('click', deleteShape);
+  $('btn-var-dup').addEventListener('click', duplicateCurrentVariant);
+  $('btn-var-del').addEventListener('click', deleteCurrentVariant);
+  $('edit-all').addEventListener('change', (e) => { state.ui.editAll = e.target.checked; });
+  $('show-guides').addEventListener('change', (e) => { state.ui.guides = e.target.checked; scheduleRender(); });
 
-  // Canvas zoom/pan: wheel + trackpad pinch zoom (non-passive so we can
-  // preventDefault), re-clamp on resize, and suppress middle-click autoscroll.
-  stage.addEventListener('wheel', onCanvasWheel, { passive: false });
-  window.addEventListener('resize', () => { clampView(); applyViewTransform(); });
-  stage.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
+  const box = $('canvas-box');
+  box.addEventListener('pointerdown', onCanvasDown);
+  box.addEventListener('pointermove', onCanvasMove);
+  box.addEventListener('pointerup', onCanvasUp);
+  box.addEventListener('pointercancel', onCanvasUp);
+  new ResizeObserver(fitStage).observe(box);
 
-  // Load priority: share link → auto-saved session → bundled default ("app
-  // icon") → built-in sample document. A share link is an explicit request, so
-  // it wins; the saved session restores the user's last work; the bundled asset
-  // is the first-visit welcome demo. A peeked share link does not overwrite the
-  // saved session — only an actual edit (commit/commitGesture) persists.
-  if (location.hash && location.hash.indexOf('doc=') >= 0) {
-    const res = decodeShareFragment(location.hash);
-    if (res && res.ok) {
-      appState.document = res.document;
-      appState.ui.projectName = res.name;
-      toast(`Loaded shared "${res.name}".`);
-    } else if (res && !res.ok) {
-      toast(res.error, 'error');
-      tdError(res.error, 'share-link');
-    }
-  } else {
-    const saved = loadSession();
-    if (saved) {
-      appState.document = saved.document;
-      appState.ui.projectName = saved.name;
-    } else {
-      try {
-        const resp = await fetch(DEFAULT_PROJECT_URL);
-        if (resp.ok) {
-          const parsed = parseProject(await resp.text());
-          if (parsed.ok) {
-            appState.document = parsed.document;
-            appState.ui.projectName = parsed.name;
-          }
-        }
-      } catch (_) {
-        /* keep the built-in sample document */
-      }
-    }
-  }
-  $('doc-name').value = appState.ui.projectName;
+  document.addEventListener('keydown', onKey);
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer?.files?.[0];
+    if (f) openFile(f);
+  });
+
+  setupExportDialog();
+  fitStage();
   render();
 }
 
-init();
+init().catch((err) => {
+  console.error(err);
+  document.body.insertAdjacentHTML('beforeend', `<div class="toast error">Failed to start: ${String(err.message).replace(/</g, '&lt;')}</div>`);
+});

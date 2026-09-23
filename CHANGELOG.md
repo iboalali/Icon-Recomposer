@@ -7,6 +7,26 @@ and the project follows [Semantic Versioning](https://semver.org/). The version
 is defined in `model.js` (`APP_VERSION`), shown in the app's top bar, and written
 into saved project files.
 
+## [Unreleased]
+
+Version 2 is a complete rewrite. The app is now an editor for lit, layered icons exported as PNG.
+
+### Added
+
+- **Shape editor.** Place rectangles and ellipses on a 108dp canvas, then move, resize and rotate them on the canvas or set exact position, size, corner radius and rotation.
+- **Lit materials based on ambientcss.** Each shape has a color, a material (matte, shiny, frosted glass, brushed, radial brushed, blasted), a surface (flat, concave, convex, groove), elevation, thickness, rounded and beveled edges, and an optional glow. One scene light with direction, key and fill strength, and tint shades every shape and the background.
+- **Variants.** Keep several versions of an icon side by side with live thumbnails, and duplicate, rename or delete them. Each variant is a full copy, and "Apply edits to all variants" sends a change to every variant at once.
+- **Foreground and background layers** for Android adaptive icons.
+- **PNG export** for the current or all variants: Play Store 512 px, legacy launcher icons at every density, adaptive icon foreground and background layers with the `mipmap-anydpi-v26` XML, and custom sizes. Optional circle, rounded square or squircle mask, launcher-view crop, and transparent background. Several files download as one zip, ready to drop into `res/`.
+- **Android guides** on the canvas for the launcher view and the safe zone.
+- Your work is saved in the browser automatically, and projects can be saved and opened as `.icjson` files.
+
+### Removed
+
+- VectorDrawable and SVG export, SVG and VectorDrawable import, gradient emboss layers, and the animation timeline from 1.x.
+- Offline use and installing as an app. Visitors who installed 1.x are moved to the new version automatically.
+- 1.x project files can no longer be opened.
+
 ## [1.8.0] — 2026-06-22
 
 ### Added
