@@ -22,6 +22,32 @@ const BASE_CSS = `
 .ir-stage { position: relative; width: ${CANVAS}px; height: ${CANVAS}px; overflow: hidden; }
 .ir-shape, .ir-halo { position: absolute; box-sizing: border-box; }
 .ir-halo { background: transparent; pointer-events: none; }
+.ir-edge {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  --_g: max(0, min(var(--amb-thickness), 1));
+  --_cw: max(-1 * var(--amb-thickness), min(var(--amb-chamfer-width), var(--amb-thickness)));
+  --_fw: max(-1 * var(--amb-thickness), min(var(--amb-fillet-width), var(--amb-thickness)));
+  --_k: var(--amb-key-light-intensity);
+  --_f: var(--amb-fill-light-intensity);
+  --_tint: color-mix(in oklab, oklch(from var(--amb-lit) calc(l + (1 - l) * 0.55) c h), white calc(var(--ir-edge-shine) * 100%));
+  --_dark: hsl(var(--amb-light-hue) var(--amb-light-saturation) 0%);
+  --_chl: max(0, min(1, var(--ir-chamfer) * var(--_g) * (var(--_k) * 1.57 + var(--_f) * 0.85 - 1.03)));
+  --_csh: max(0, min(1, var(--ir-chamfer) * var(--_g) * ((var(--_k) - var(--_f)) * 0.19 + 0.24)));
+  --_fhl: max(0, min(1, var(--ir-fillet) * var(--_g) * (var(--_k) * 1.44 + var(--_f) * 0.85 - 0.99)));
+  --_fsh: max(0, min(1, var(--ir-fillet) * var(--_g) * ((var(--_k) - var(--_f)) * 0.23 + 0.3)));
+  box-shadow:
+    inset calc(var(--amb-light-x) * var(--_cw) * -1px) calc(var(--amb-light-y) * var(--_cw) * -1px) 0 0
+      color-mix(in oklab, var(--_tint) calc(var(--_chl) * 100%), transparent),
+    inset calc(var(--amb-light-x) * var(--_cw) * 1px) calc(var(--amb-light-y) * var(--_cw) * 1px) 0 0
+      color-mix(in oklab, var(--_dark) calc(var(--_csh) * 100%), transparent),
+    inset calc(var(--amb-light-x) * var(--_fw) * -1.4px) calc(var(--amb-light-y) * var(--_fw) * -1.4px) 2px 0
+      color-mix(in oklab, var(--_tint) calc(var(--_fhl) * 100%), transparent),
+    inset calc(var(--amb-light-x) * var(--_fw) * 1.4px) calc(var(--amb-light-y) * var(--_fw) * 1.4px) 2px 0
+      color-mix(in oklab, var(--_dark) calc(var(--_fsh) * 100%), transparent);
+}
 `;
 
 let cssPromise = null;
@@ -94,10 +120,13 @@ function shapeMarkup(shape, scene, extra = '') {
     `--amb-shade:${num(st.shade)}`,
     `--amb-elevation:${num(st.elevation)}`,
     `--amb-thickness:${num(st.thickness)}`,
-    `--amb-chamfer:${st.chamfer ? 1 : 0}`,
+    '--amb-chamfer:0',
+    '--amb-fillet:0',
+    `--ir-chamfer:${st.chamfer ? 1 : 0}`,
     `--amb-chamfer-width:${num(st.chamferWidth)}`,
-    `--amb-fillet:${st.fillet ? 1 : 0}`,
+    `--ir-fillet:${st.fillet ? 1 : 0}`,
     `--amb-fillet-width:${num(st.filletWidth)}`,
+    `--ir-edge-shine:${num(st.edgeShine)}`,
     `--amb-curve-scale:${num(st.curveScale)}`,
     `--amb-grain-amount:${num(st.grain)}`,
   ].join(';');
@@ -108,7 +137,8 @@ function shapeMarkup(shape, scene, extra = '') {
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
   const id = extra ? '' : ` data-id="${esc(shape.id)}"`;
-  out += `<div class="${classes.join(' ')}"${id} style="${geo}${opacity}${vars}"></div>`;
+  const edge = st.chamfer || st.fillet ? '<div class="ir-edge"></div>' : '';
+  out += `<div class="${classes.join(' ')}"${id} style="${geo}${opacity}${vars}">${edge}</div>`;
   return out;
 }
 

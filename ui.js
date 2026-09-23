@@ -1053,6 +1053,7 @@ function buildInspector(root) {
     advanced: [
       slider('Fillet width', { min: -2, max: 2, step: 0.1, ...styleCtl('filletWidth') }),
       slider('Chamfer width', { min: -2, max: 2, step: 0.1, ...styleCtl('chamferWidth') }),
+      slider('Edge shine', { min: 0, max: 1, step: 0.05, ...styleCtl('edgeShine') }),
       slider('Shade', { min: 0, max: 2, step: 0.01, ...styleCtl('shade') }),
       slider('Curve depth', { min: 0, max: 4, step: 0.05, ...styleCtl('curveScale') }),
       slider('Grain', { min: 0, max: 3, step: 0.05, ...styleCtl('grain') }),
