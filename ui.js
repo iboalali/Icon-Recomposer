@@ -16,13 +16,23 @@ import { createColorField } from './colorpicker.js';
 const STORAGE_KEY = 'icon-recomposer-2/doc';
 const EXPORT_PREFS_KEY = 'icon-recomposer-2/export';
 const UNSAVED_KEY = 'icon-recomposer-2/unsaved';
+const VARIANT_KEY = 'icon-recomposer-2/variant';
 const $ = (id) => document.getElementById(id);
 
 const state = {
   doc: loadStoredDocument(),
-  ui: { variant: 0, selected: [], primary: null, editAll: false, guides: false, zoom: 4, unsaved: loadUnsaved() },
+  ui: {
+    variant: 0, selected: [], primary: null, editAll: false, guides: false, unsaved: loadUnsaved(),
+    // zoom = fit * view.scale is CSS px per canvas unit; view.scale 1 fits the
+    // canvas, and pan (screen px) moves the frame inside the canvas area.
+    zoom: 4, fit: 4, view: { scale: 1, panX: 0, panY: 0 },
+  },
 };
 const history = { undo: [], redo: [], pending: null };
+state.ui.variant = loadVariantIndex(state.doc);
+// Saved right away so a fresh sample keeps its ids (and remembered variant)
+// across reloads, not only after the first edit.
+persist();
 
 function loadStoredDocument() {
   try {
@@ -48,6 +58,26 @@ function setUnsaved(v) {
     if (v) localStorage.setItem(UNSAVED_KEY, '1');
     else localStorage.removeItem(UNSAVED_KEY);
   } catch { /* storage unavailable */ }
+}
+
+// The selected variant is remembered by id, so a reload reopens it.
+function loadVariantIndex(doc) {
+  try {
+    const i = doc.variants.findIndex((v) => v.id === localStorage.getItem(VARIANT_KEY));
+    return i < 0 ? 0 : i;
+  } catch {
+    return 0;
+  }
+}
+
+let rememberedVariant = null;
+function rememberVariant() {
+  const id = variant().id;
+  if (id === rememberedVariant) return;
+  rememberedVariant = id;
+  try {
+    localStorage.setItem(VARIANT_KEY, id);
+  } catch { /* per-viewer convenience only */ }
 }
 
 function persist() {
@@ -151,6 +181,8 @@ function redo() {
 
 function loadDocument(doc) {
   state.doc = doc;
+  state.ui.view = { scale: 1, panX: 0, panY: 0 };
+  if ($('stage-frame')) applyView();
   state.ui.variant = 0;
   state.ui.selected = [];
   state.ui.primary = null;
@@ -181,6 +213,7 @@ function render() {
   $('btn-undo').disabled = !history.undo.length && !history.pending;
   $('btn-redo').disabled = !history.redo.length;
   $('edit-all').checked = state.ui.editAll;
+  rememberVariant();
   renderStage();
   renderSelection();
   renderShapeList();
@@ -206,15 +239,137 @@ function renderStage() {
   $('guides').hidden = !state.ui.guides;
 }
 
+// ---------------------------------------------------------------------------
+// zoom and pan (view only: never part of the document or the exports)
+//
+// The frame grows through CSS zoom rather than a transform, so the icon is
+// laid out and painted again at the new size and stays sharp. toCanvas reads
+// the frame's live rect, so hit tests and drags work at any zoom.
+
+const MAX_ZOOM = 16;
+const activePointers = new Map();
+let pinch = null;
+let panDrag = null;
+let spaceHeld = false;
+
 function fitStage() {
   const box = $('canvas-box').getBoundingClientRect();
-  const avail = Math.max(120, Math.min(box.width, box.height) - 48);
-  state.ui.zoom = avail / M.CANVAS;
+  state.ui.fit = Math.max(120, Math.min(box.width, box.height) - 48) / M.CANVAS;
+  applyView();
+}
+
+function boxCenter() {
+  const r = $('canvas-box').getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+}
+
+function clampView() {
+  const v = state.ui.view;
+  const c = boxCenter();
+  const size = M.CANVAS * state.ui.fit * v.scale;
+  // Free panning, as long as at least 48 px of the canvas stays in view.
+  const maxX = Math.max(0, (size + c.w) / 2 - 48);
+  const maxY = Math.max(0, (size + c.h) / 2 - 48);
+  v.panX = Math.max(-maxX, Math.min(maxX, v.panX));
+  v.panY = Math.max(-maxY, Math.min(maxY, v.panY));
+}
+
+function applyView() {
+  const v = state.ui.view;
+  clampView();
+  state.ui.zoom = state.ui.fit * v.scale;
   const px = M.CANVAS * state.ui.zoom;
   $('stage-host').style.zoom = state.ui.zoom;
   $('stage-frame').style.width = `${px}px`;
   $('stage-frame').style.height = `${px}px`;
+  $('stage-frame').style.transform = `translate(calc(-50% + ${v.panX}px), calc(-50% + ${v.panY}px))`;
+  $('zoom-level').textContent = `${Math.round(v.scale * 100)}%`;
+  $('btn-zoom-out').disabled = v.scale <= 1;
+  $('btn-zoom-in').disabled = v.scale >= MAX_ZOOM;
+  $('canvas-box').classList.toggle('pannable', spaceHeld);
+  $('canvas-box').classList.toggle('panning', !!panDrag);
   scheduleRender();
+}
+
+// Zooms toward a client-space point, keeping the content under it in place:
+// pan' = k * pan + (1 - k) * (point - center), k = scale' / scale.
+function zoomAt(cx, cy, factor) {
+  const v = state.ui.view;
+  const next = Math.max(1, Math.min(MAX_ZOOM, v.scale * factor));
+  if (next === v.scale) return;
+  const k = next / v.scale;
+  const c = boxCenter();
+  v.panX = k * v.panX + (1 - k) * (cx - c.x);
+  v.panY = k * v.panY + (1 - k) * (cy - c.y);
+  v.scale = next;
+  applyView();
+}
+
+function zoomBy(factor) {
+  const c = boxCenter();
+  zoomAt(c.x, c.y, factor);
+}
+
+function resetView() {
+  state.ui.view = { scale: 1, panX: 0, panY: 0 };
+  applyView();
+}
+
+// Frames the selected shapes (all visible shapes if none are selected) so they
+// fill about 60% of the canvas area.
+function zoomToSelection() {
+  const shapes = (selectedShapes().length ? selectedShapes() : variant().shapes).filter((s) => !s.hidden);
+  if (!shapes.length) return resetView();
+  const b = shapes.map(shapeBounds).reduce((a, x) => ({
+    x0: Math.min(a.x0, x.x0), y0: Math.min(a.y0, x.y0), x1: Math.max(a.x1, x.x1), y1: Math.max(a.y1, x.y1),
+  }));
+  const c = boxCenter();
+  const extent = Math.max(b.x1 - b.x0, b.y1 - b.y0, 2);
+  const v = state.ui.view;
+  v.scale = Math.max(1, Math.min(MAX_ZOOM, (Math.min(c.w, c.h) * 0.6) / (extent * state.ui.fit)));
+  const zoom = state.ui.fit * v.scale;
+  v.panX = -((b.x0 + b.x1) / 2 - M.CANVAS / 2) * zoom;
+  v.panY = -((b.y0 + b.y1) / 2 - M.CANVAS / 2) * zoom;
+  applyView();
+}
+
+function onCanvasWheel(e) {
+  e.preventDefault();
+  let dy = e.deltaY;
+  if (e.deltaMode === 1) dy *= 16;
+  else if (e.deltaMode === 2) dy *= $('canvas-box').clientHeight;
+  zoomAt(e.clientX, e.clientY, Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0015)));
+}
+
+function startPan(e) {
+  const v = state.ui.view;
+  panDrag = { x: e.clientX, y: e.clientY, panX: v.panX, panY: v.panY };
+  $('canvas-box').setPointerCapture(e.pointerId);
+  e.preventDefault();
+  applyView();
+}
+
+const pointerDist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const pointerMid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+function startPinch() {
+  const [a, b] = [...activePointers.values()];
+  const v = state.ui.view;
+  pinch = { dist: pointerDist(a, b) || 1, mid: pointerMid(a, b), scale: v.scale, panX: v.panX, panY: v.panY };
+}
+
+function onPinchMove() {
+  const [a, b] = [...activePointers.values()];
+  if (!a || !b) return;
+  const v = state.ui.view;
+  const c = boxCenter();
+  const m = pointerMid(a, b);
+  const next = Math.max(1, Math.min(MAX_ZOOM, pinch.scale * (pointerDist(a, b) / pinch.dist)));
+  const k = next / pinch.scale;
+  v.panX = k * pinch.panX + ((m.x - c.x) - k * (pinch.mid.x - c.x));
+  v.panY = k * pinch.panY + ((m.y - c.y) - k * (pinch.mid.y - c.y));
+  v.scale = next;
+  applyView();
 }
 
 function renderSelection() {
@@ -315,6 +470,18 @@ function startMove(p, collapseTo = null) {
 }
 
 function onCanvasDown(e) {
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activePointers.size === 2) {
+    if (drag) onCanvasUp();
+    panDrag = null;
+    startPinch();
+    e.preventDefault();
+    return;
+  }
+  if (e.button === 1 || (e.button === 0 && spaceHeld)) {
+    startPan(e);
+    return;
+  }
   if (e.button !== 0) return;
   const p = toCanvas(e);
   const handle = e.target.closest?.('.handle');
@@ -357,6 +524,15 @@ function onCanvasDown(e) {
 }
 
 function onCanvasMove(e) {
+  if (activePointers.has(e.pointerId)) activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch) return onPinchMove();
+  if (panDrag) {
+    const v = state.ui.view;
+    v.panX = panDrag.panX + (e.clientX - panDrag.x);
+    v.panY = panDrag.panY + (e.clientY - panDrag.y);
+    applyView();
+    return;
+  }
   if (!drag) return;
   const p = toCanvas(e);
   if (drag.kind === 'move') {
@@ -438,7 +614,17 @@ function resizeTo(p, keepAspect) {
   }));
 }
 
-function onCanvasUp() {
+function onCanvasUp(e) {
+  if (e) activePointers.delete(e.pointerId);
+  if (pinch) {
+    if (activePointers.size < 2) pinch = null;
+    return;
+  }
+  if (panDrag) {
+    panDrag = null;
+    applyView();
+    return;
+  }
   if (!drag) return;
   if (drag.kind === 'move' && !drag.moved && drag.collapseTo) setSelection([drag.collapseTo]);
   if (drag.kind === 'marquee') $('marquee').hidden = true;
@@ -904,6 +1090,17 @@ function section(title, controls, { advanced = [] } = {}) {
   };
 }
 
+// Shown only while show() is true.
+function showWhen(show, ctrl) {
+  return {
+    el: ctrl.el,
+    update() {
+      ctrl.el.hidden = !show();
+      if (!ctrl.el.hidden) ctrl.update();
+    },
+  };
+}
+
 // Shown only while exactly one shape is selected.
 function singleOnly(ctrl) {
   return {
@@ -1043,6 +1240,8 @@ function buildInspector(root) {
   const lookSec = section('Look', [
     color('Color', styleCtl('color')),
     select('Material', { options: M.MATERIALS, ...styleCtl('material') }),
+    showWhen(() => selectedShapes().some((s) => s.style.material === 'glass'),
+      slider('Frost', { min: 0, max: 1, step: 0.01, ...styleCtl('frost') })),
     select('Surface', { options: M.SURFACES, ...styleCtl('surface'), disabled: () => selectedShapes().every((s) => s.style.material === 'glass') }),
     slider('Elevation', { min: 0, max: 3, step: 0.05, ...styleCtl('elevation') }),
     slider('Thickness', { min: 0, max: 2, step: 0.05, ...styleCtl('thickness') }),
@@ -1431,6 +1630,9 @@ function onKey(e) {
   if (isDialogOpen() || !$('export-overlay').hidden || !$('copy-overlay').hidden) return;
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
+  if (mod && (k === '=' || k === '+')) { e.preventDefault(); zoomBy(1.25); return; }
+  if (mod && k === '-') { e.preventDefault(); zoomBy(0.8); return; }
+  if (mod && k === '0') { e.preventDefault(); resetView(); return; }
   if (mod && k === 's') { e.preventDefault(); saveProject(); return; }
   if (mod && k === 'o') { e.preventDefault(); $('file-open').click(); return; }
   if (isTyping(e)) {
@@ -1440,6 +1642,13 @@ function onKey(e) {
   if (mod && k === 'z') { e.preventDefault(); (e.shiftKey ? redo : undo)(); return; }
   if (mod && k === 'y') { e.preventDefault(); redo(); return; }
   if (mod && k === 'd') { e.preventDefault(); duplicateShape(); return; }
+  if (e.shiftKey && e.code === 'Digit1') { e.preventDefault(); resetView(); return; }
+  if (e.shiftKey && e.code === 'Digit2') { e.preventDefault(); zoomToSelection(); return; }
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (!spaceHeld) { spaceHeld = true; applyView(); }
+    return;
+  }
   if (e.key === 'Escape') { setSelection([]); return; }
   if (mod && k === 'a') { e.preventDefault(); setSelection(variant().shapes.filter((s) => !s.hidden).map((s) => s.id)); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteShape(); return; }
@@ -1495,6 +1704,16 @@ async function init() {
   new ResizeObserver(fitStage).observe(box);
 
   document.addEventListener('keydown', onKey);
+  document.addEventListener('keyup', (e) => {
+    if (e.code === 'Space' && spaceHeld) { spaceHeld = false; applyView(); }
+  });
+  window.addEventListener('blur', () => { if (spaceHeld) { spaceHeld = false; applyView(); } });
+  box.addEventListener('wheel', onCanvasWheel, { passive: false });
+  box.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
+  $('btn-zoom-in').addEventListener('click', () => zoomBy(1.25));
+  $('btn-zoom-out').addEventListener('click', () => zoomBy(0.8));
+  $('btn-zoom-fit').addEventListener('click', resetView);
+  $('btn-zoom-sel').addEventListener('click', zoomToSelection);
   setupFileDrop();
 
   setupExportDialog();

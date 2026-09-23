@@ -131,7 +131,8 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-
     radial-gradient(circle at 50% 40%, #1b1f2a, #0f1115 70%);
   touch-action: none;
 }
-.stage-frame { position: relative; box-shadow: 0 0 0 1px var(--line-2); }
+.canvas-box { position: relative; }
+.stage-frame { position: absolute; left: 50%; top: 50%; box-shadow: 0 0 0 1px var(--line-2); }
 .stage-host { display: block; }
 .overlay { position: absolute; inset: 0; pointer-events: none; }
 .guides, .guide-viewport, .guide-safe { position: absolute; }
@@ -434,3 +435,9 @@ body.file-drag::after {
 #copy-shape-parts { margin-top: 0.35rem; padding-top: 0.45rem; border-top: 1px solid var(--line-2); }
 @media (max-width: 900px) { .copy-grid { grid-template-columns: 1fr; } }
 .insp-action { align-self: flex-start; }
+.canvas-bar { align-items: center; }
+.zoom-controls { display: flex; align-items: center; gap: 0.35rem; }
+.zoom-level { min-width: 3.4rem; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+.tbtn.small.icon { min-width: 26px; padding: 0.2rem 0.35rem; font-size: 14px; }
+.canvas-box.pannable { cursor: grab; }
+.canvas-box.panning { cursor: grabbing; }

@@ -22,6 +22,22 @@ const BASE_CSS = `
 .ir-stage { position: relative; width: ${CANVAS}px; height: ${CANVAS}px; overflow: hidden; }
 .ir-shape, .ir-halo { position: absolute; box-sizing: border-box; }
 .ir-halo { background: transparent; pointer-events: none; }
+/* Frost scales ambient.css's glass pane: 0 is clear glass, 0.3 is ambient.css's
+   own fit, 1 is a near-opaque milky pane. The pane keeps the tone it has at the
+   fit, so more frost turns it milkier, not darker. */
+.ir-shape.amb-mat-glass {
+  --_ir-a0: calc(
+    (0.232 - var(--amb-fill-light-intensity) * 0.017) *
+      (0.245 + var(--_glass-body) * 0.755 + var(--_glass-slab2) * 0.09)
+  );
+  --_ir-lo: min(1, var(--ir-frost) / 0.3);
+  --_ir-hi: max(0, (var(--ir-frost) - 0.3) / 0.7);
+  --_glass-lightness: calc(var(--_glass-veil) / var(--_ir-a0) * 100%);
+  --_glass-alpha: calc(var(--_ir-a0) * var(--_ir-lo) + (0.82 - var(--_ir-a0)) * var(--_ir-hi));
+  --_glass-blur: calc(
+    (var(--amb-elevation) * 1.51 + var(--amb-thickness) * 0.63) * var(--_ir-lo) * 1px + var(--_ir-hi) * 6px
+  );
+}
 .ir-edge {
   position: absolute;
   inset: 0;
@@ -125,6 +141,7 @@ function shapeMarkup(shape, scene, extra = '') {
     `--ir-fillet:${st.fillet ? 1 : 0}`,
     `--amb-fillet-width:${num(st.filletWidth)}`,
     `--ir-edge-shine:${num(st.edgeShine)}`,
+    `--ir-frost:${num(st.frost)}`,
     `--amb-curve-scale:${num(st.curveScale)}`,
     `--amb-grain-amount:${num(st.grain)}`,
   ].join(';');
