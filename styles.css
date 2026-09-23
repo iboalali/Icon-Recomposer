@@ -192,7 +192,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-
 }
 .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
 .field select:disabled { opacity: 0.5; }
-.slider { display: grid; grid-template-columns: 1fr 58px; gap: 0.45rem; align-items: center; }
+.slider { display: grid; grid-template-columns: 1fr 66px; gap: 0.45rem; align-items: center; }
 .slider input[type="range"] { width: 100%; accent-color: var(--accent); }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
 .pair label { display: grid; grid-template-columns: 16px 1fr; align-items: center; gap: 0.3rem; color: var(--muted); font-size: 12px; }
@@ -404,4 +404,11 @@ body.file-drag::after {
   color: var(--text);
   font-size: 16px;
   pointer-events: none;
+}
+.sel-outline { position: absolute; outline: 1.5px solid var(--accent); opacity: 0.75; }
+.sel-outline.primary { opacity: 1; outline-width: 2px; }
+.marquee { position: absolute; border: 1px solid var(--accent); background: rgba(91, 157, 255, 0.12); }
+.shape-list li.primary { box-shadow: inset 3px 0 0 var(--accent); }
+.swatch-btn.mixed {
+  background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.35) 0 6px, rgba(0, 0, 0, 0.25) 6px 12px) !important;
 }

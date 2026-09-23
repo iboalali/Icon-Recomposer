@@ -20,7 +20,7 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   doc: loadStoredDocument(),
-  ui: { variant: 0, selected: null, editAll: false, guides: false, zoom: 4, unsaved: loadUnsaved() },
+  ui: { variant: 0, selected: [], primary: null, editAll: false, guides: false, zoom: 4, unsaved: loadUnsaved() },
 };
 const history = { undo: [], redo: [], pending: null };
 
@@ -60,7 +60,31 @@ function persist() {
 // state helpers
 
 const variant = () => state.doc.variants[state.ui.variant];
-const selectedShape = () => variant().shapes.find((s) => s.id === state.ui.selected) || null;
+// Selection is a list of shape ids in the current variant. The primary shape is
+// the one clicked last: the inspector shows its values and single-shape
+// handles belong to it.
+const selectedShapes = () => variant().shapes.filter((s) => state.ui.selected.includes(s.id));
+const primaryShape = () => {
+  const sel = selectedShapes();
+  return sel.find((s) => s.id === state.ui.primary) || sel[sel.length - 1] || null;
+};
+const isSelected = (id) => state.ui.selected.includes(id);
+
+function setSelection(ids, primary = ids[ids.length - 1] ?? null) {
+  state.ui.selected = [...new Set(ids)];
+  state.ui.primary = primary;
+  scheduleRender();
+}
+
+function pruneSelection() {
+  const ids = new Set(variant().shapes.map((s) => s.id));
+  state.ui.selected = state.ui.selected.filter((id) => ids.has(id));
+  if (!ids.has(state.ui.primary)) state.ui.primary = state.ui.selected[state.ui.selected.length - 1] ?? null;
+}
+
+function forSelected(fn) {
+  for (const id of state.ui.selected) forShape(id, fn);
+}
 const targets = () => (state.ui.editAll ? state.doc.variants : [variant()]);
 
 function forShape(id, fn) {
@@ -103,7 +127,7 @@ function edit(fn) {
 function restore(doc) {
   state.doc = doc;
   state.ui.variant = Math.min(state.ui.variant, doc.variants.length - 1);
-  if (!selectedShape()) state.ui.selected = null;
+  pruneSelection();
   setUnsaved(true);
   persist();
   scheduleRender();
@@ -128,7 +152,8 @@ function redo() {
 function loadDocument(doc) {
   state.doc = doc;
   state.ui.variant = 0;
-  state.ui.selected = null;
+  state.ui.selected = [];
+  state.ui.primary = null;
   history.undo = [];
   history.redo = [];
   history.pending = null;
@@ -193,20 +218,29 @@ function fitStage() {
 }
 
 function renderSelection() {
-  const s = selectedShape();
+  const shapes = selectedShapes().filter((s) => !s.hidden);
   const sel = $('selection');
-  if (!s || s.hidden) {
+  const outlines = $('outlines');
+  const z = state.ui.zoom;
+  outlines.replaceChildren();
+  if (shapes.length > 1) {
+    sel.hidden = true;
+    for (const s of shapes) {
+      const o = document.createElement('div');
+      o.className = 'sel-outline';
+      o.classList.toggle('primary', s.id === state.ui.primary);
+      placeBox(o, s, z);
+      outlines.append(o);
+    }
+    return;
+  }
+  const s = shapes[0];
+  if (!s) {
     sel.hidden = true;
     return;
   }
-  const z = state.ui.zoom;
   sel.hidden = false;
-  sel.style.left = `${s.x * z}px`;
-  sel.style.top = `${s.y * z}px`;
-  sel.style.width = `${s.w * z}px`;
-  sel.style.height = `${s.h * z}px`;
-  sel.style.transform = s.rotation ? `rotate(${s.rotation}deg)` : '';
-  sel.style.borderRadius = s.kind === 'ellipse' ? '50%' : `${s.radius * z}px`;
+  placeBox(sel, s, z);
   for (const h of sel.querySelectorAll('.handle')) {
     const hv = h.dataset.handle;
     if (hv === 'rot') {
@@ -219,6 +253,15 @@ function renderSelection() {
     h.style.top = `${((hy + 1) / 2) * 100}%`;
     h.style.cursor = cursorFor(hx, hy, s.rotation);
   }
+}
+
+function placeBox(el, s, z) {
+  el.style.left = `${s.x * z}px`;
+  el.style.top = `${s.y * z}px`;
+  el.style.width = `${s.w * z}px`;
+  el.style.height = `${s.h * z}px`;
+  el.style.transform = s.rotation ? `rotate(${s.rotation}deg)` : '';
+  el.style.borderRadius = s.kind === 'ellipse' ? '50%' : `${s.radius * z}px`;
 }
 
 function cursorFor(hx, hy, rotation) {
@@ -268,11 +311,27 @@ function hitTest(p) {
   return null;
 }
 
+// Axis-aligned bounds of a (possibly rotated) shape, for the selection box.
+function shapeBounds(s) {
+  const t = rad(s.rotation);
+  const hw = (Math.abs(s.w * Math.cos(t)) + Math.abs(s.h * Math.sin(t))) / 2;
+  const hh = (Math.abs(s.w * Math.sin(t)) + Math.abs(s.h * Math.cos(t))) / 2;
+  const cx = s.x + s.w / 2;
+  const cy = s.y + s.h / 2;
+  return { x0: cx - hw, y0: cy - hh, x1: cx + hw, y1: cy + hh };
+}
+
+function startMove(p, collapseTo = null) {
+  const orig = new Map(selectedShapes().map((s) => [s.id, { x: s.x, y: s.y }]));
+  drag = { kind: 'move', start: p, orig, moved: false, collapseTo };
+}
+
 function onCanvasDown(e) {
   if (e.button !== 0) return;
   const p = toCanvas(e);
   const handle = e.target.closest?.('.handle');
-  const s = selectedShape();
+  const s = primaryShape();
+  const additive = e.shiftKey || e.ctrlKey || e.metaKey;
   if (handle && s) {
     const hv = handle.dataset.handle;
     drag = hv === 'rot'
@@ -280,9 +339,28 @@ function onCanvasDown(e) {
       : { kind: 'resize', id: s.id, h: hv.split(',').map(Number), start: p, orig: { ...s } };
   } else {
     const hit = hitTest(p);
-    state.ui.selected = hit ? hit.id : null;
-    drag = hit ? { kind: 'move', id: hit.id, start: p, orig: { x: hit.x, y: hit.y } } : null;
-    scheduleRender();
+    if (hit && additive) {
+      if (isSelected(hit.id)) {
+        setSelection(state.ui.selected.filter((id) => id !== hit.id));
+        drag = null;
+      } else {
+        setSelection([...state.ui.selected, hit.id], hit.id);
+        startMove(p);
+      }
+    } else if (hit) {
+      if (isSelected(hit.id)) {
+        state.ui.primary = hit.id;
+        startMove(p, hit.id);
+      } else {
+        setSelection([hit.id]);
+        startMove(p);
+      }
+      scheduleRender();
+    } else {
+      const base = additive ? [...state.ui.selected] : [];
+      if (!additive) setSelection([]);
+      drag = { kind: 'marquee', start: p, base };
+    }
   }
   if (drag) {
     $('canvas-box').setPointerCapture(e.pointerId);
@@ -297,12 +375,17 @@ function onCanvasMove(e) {
     const dx = p.x - drag.start.x;
     const dy = p.y - drag.start.y;
     if (!dx && !dy) return;
-    mutate(() => forShape(drag.id, (s) => {
-      s.x = round2(drag.orig.x + dx);
-      s.y = round2(drag.orig.y + dy);
-    }));
+    drag.moved = true;
+    mutate(() => {
+      for (const [id, o] of drag.orig) {
+        forShape(id, (s) => {
+          s.x = round2(o.x + dx);
+          s.y = round2(o.y + dy);
+        });
+      }
+    });
   } else if (drag.kind === 'rotate') {
-    const s = selectedShape();
+    const s = primaryShape();
     const cx = s.x + s.w / 2;
     const cy = s.y + s.h / 2;
     let a = (Math.atan2(p.y - cy, p.x - cx) * 180) / Math.PI + 90;
@@ -311,7 +394,29 @@ function onCanvasMove(e) {
     mutate(() => forShape(drag.id, (x) => { x.rotation = round2(a); }));
   } else if (drag.kind === 'resize') {
     resizeTo(p, e.shiftKey);
+  } else if (drag.kind === 'marquee') {
+    updateMarquee(p);
   }
+}
+
+function updateMarquee(p) {
+  const r = {
+    x0: Math.min(drag.start.x, p.x), y0: Math.min(drag.start.y, p.y),
+    x1: Math.max(drag.start.x, p.x), y1: Math.max(drag.start.y, p.y),
+  };
+  const z = state.ui.zoom;
+  const m = $('marquee');
+  m.hidden = false;
+  m.style.left = `${r.x0 * z}px`;
+  m.style.top = `${r.y0 * z}px`;
+  m.style.width = `${(r.x1 - r.x0) * z}px`;
+  m.style.height = `${(r.y1 - r.y0) * z}px`;
+  const hits = variant().shapes.filter((s) => {
+    if (s.hidden) return false;
+    const b = shapeBounds(s);
+    return b.x0 <= r.x1 && b.x1 >= r.x0 && b.y0 <= r.y1 && b.y1 >= r.y0;
+  }).map((s) => s.id);
+  setSelection([...drag.base, ...hits]);
 }
 
 // Resizes in the shape's own rotated frame: the dragged edge follows the
@@ -347,6 +452,8 @@ function resizeTo(p, keepAspect) {
 
 function onCanvasUp() {
   if (!drag) return;
+  if (drag.kind === 'move' && !drag.moved && drag.collapseTo) setSelection([drag.collapseTo]);
+  if (drag.kind === 'marquee') $('marquee').hidden = true;
   drag = null;
   commit();
 }
@@ -376,7 +483,8 @@ function renderShapeList() {
     }
     const li = document.createElement('li');
     li.className = 'shape-row';
-    li.classList.toggle('selected', s.id === state.ui.selected);
+    li.classList.toggle('selected', isSelected(s.id));
+    li.classList.toggle('primary', s.id === state.ui.primary && state.ui.selected.length > 1);
     li.classList.toggle('hidden-shape', s.hidden);
     const sw = document.createElement('span');
     sw.className = `shape-swatch ${s.kind}`;
@@ -393,14 +501,28 @@ function renderShapeList() {
       edit(() => forShape(s.id, (x) => { x.hidden = !s.hidden; }));
     });
     li.append(sw, name, eye);
-    li.addEventListener('click', () => {
-      state.ui.selected = s.id;
-      scheduleRender();
-    });
+    li.addEventListener('click', (e) => onListClick(e, s.id, ordered));
     list.append(li);
   }
-  const s = selectedShape();
-  for (const id of ['btn-shape-up', 'btn-shape-down', 'btn-shape-dup', 'btn-shape-del']) $(id).disabled = !s;
+  const none = !state.ui.selected.length;
+  for (const id of ['btn-shape-up', 'btn-shape-down', 'btn-shape-dup', 'btn-shape-del']) $(id).disabled = none;
+}
+
+// Ctrl/Cmd-click toggles, Shift-click selects the range from the primary shape
+// in list order, a plain click selects only that shape.
+function onListClick(e, id, ordered) {
+  if (e.ctrlKey || e.metaKey) {
+    if (isSelected(id)) setSelection(state.ui.selected.filter((x) => x !== id));
+    else setSelection([...state.ui.selected, id], id);
+  } else if (e.shiftKey && state.ui.primary) {
+    const ids = ordered.map((s) => s.id);
+    const a = ids.indexOf(state.ui.primary);
+    const b = ids.indexOf(id);
+    if (a < 0) return setSelection([id]);
+    setSelection([...state.ui.selected, ...ids.slice(Math.min(a, b), Math.max(a, b) + 1)], state.ui.primary);
+  } else {
+    setSelection([id]);
+  }
 }
 
 function addShape(kind) {
@@ -410,54 +532,57 @@ function addShape(kind) {
   edit(() => {
     for (const v of targets()) v.shapes.push(structuredClone(shape));
   });
-  state.ui.selected = shape.id;
-  scheduleRender();
+  setSelection([shape.id]);
 }
 
 function duplicateShape() {
-  const s = selectedShape();
-  if (!s) return;
-  const id = M.newId('s');
+  const ids = selectedShapes().map((s) => s.id);
+  if (!ids.length) return;
+  const copies = new Map(ids.map((id) => [id, M.newId('s')]));
   edit(() => {
     for (const v of targets()) {
-      const i = v.shapes.findIndex((x) => x.id === s.id);
-      if (i < 0) continue;
-      const copy = structuredClone(v.shapes[i]);
-      copy.id = id;
-      copy.name = `${copy.name} copy`;
-      copy.x += 4;
-      copy.y += 4;
-      v.shapes.splice(i + 1, 0, copy);
+      for (const id of ids) {
+        const i = v.shapes.findIndex((x) => x.id === id);
+        if (i < 0) continue;
+        const copy = structuredClone(v.shapes[i]);
+        copy.id = copies.get(id);
+        copy.name = `${copy.name} copy`;
+        copy.x += 4;
+        copy.y += 4;
+        v.shapes.splice(i + 1, 0, copy);
+      }
     }
   });
-  state.ui.selected = id;
-  scheduleRender();
+  setSelection([...copies.values()], copies.get(state.ui.primary) ?? null);
 }
 
 function deleteShape() {
-  const s = selectedShape();
-  if (!s) return;
+  const ids = new Set(state.ui.selected);
+  if (!ids.size) return;
   edit(() => {
-    for (const v of targets()) v.shapes = v.shapes.filter((x) => x.id !== s.id);
+    for (const v of targets()) v.shapes = v.shapes.filter((x) => !ids.has(x.id));
   });
-  state.ui.selected = null;
-  scheduleRender();
+  setSelection([]);
 }
 
-// Moves the shape one step up (toward the top of its layer) or down, swapping
-// with the nearest shape on the same layer.
+// Moves each selected shape one step up (toward the top of its layer) or down,
+// swapping with the nearest shape on the same layer. A shape blocked by the
+// layer edge or by another selected shape stays put, so the group keeps its
+// order.
 function moveShape(dir) {
-  const s = selectedShape();
-  if (!s) return;
+  const ids = new Set(state.ui.selected);
+  if (!ids.size) return;
   edit(() => {
     for (const v of targets()) {
-      const i = v.shapes.findIndex((x) => x.id === s.id);
-      if (i < 0) continue;
-      const layer = v.shapes[i].layer;
-      let j = i + dir;
-      while (j >= 0 && j < v.shapes.length && v.shapes[j].layer !== layer) j += dir;
-      if (j < 0 || j >= v.shapes.length) continue;
-      [v.shapes[i], v.shapes[j]] = [v.shapes[j], v.shapes[i]];
+      const order = v.shapes.map((_, i) => i).filter((i) => ids.has(v.shapes[i].id));
+      if (dir > 0) order.reverse();
+      for (const i of order) {
+        const layer = v.shapes[i].layer;
+        let j = i + dir;
+        while (j >= 0 && j < v.shapes.length && v.shapes[j].layer !== layer) j += dir;
+        if (j < 0 || j >= v.shapes.length || ids.has(v.shapes[j].id)) continue;
+        [v.shapes[i], v.shapes[j]] = [v.shapes[j], v.shapes[i]];
+      }
     }
   });
 }
@@ -489,7 +614,7 @@ function renderVariants() {
       card.addEventListener('click', () => {
         commit();
         state.ui.variant = state.doc.variants.findIndex((x) => x.id === v.id);
-        if (!selectedShape()) state.ui.selected = null;
+        pruneSelection();
         scheduleRender();
       });
       t = { card, root: mountIcon(inner), name, markup: '' };
@@ -548,7 +673,7 @@ async function deleteCurrentVariant() {
   if (!ok) return;
   edit(() => state.doc.variants.splice(state.ui.variant, 1));
   state.ui.variant = Math.max(0, state.ui.variant - 1);
-  if (!selectedShape()) state.ui.selected = null;
+  pruneSelection();
   scheduleRender();
 }
 
@@ -569,7 +694,10 @@ function fieldRow(label, control) {
   return row;
 }
 
-function slider(label, { min, max, step, get, set, hue = false }) {
+// Controls take an optional mixed() that reports whether the selected shapes
+// disagree; a mixed control shows the primary shape's value without a number,
+// and editing it sets every selected shape to the new value.
+function slider(label, { min, max, step, get, set, mixed, hue = false }) {
   const wrap = document.createElement('div');
   wrap.className = 'slider';
   const range = document.createElement('input');
@@ -592,13 +720,15 @@ function slider(label, { min, max, step, get, set, hue = false }) {
     el: row,
     update() {
       const v = get();
+      const m = !!mixed?.();
       range.value = v;
-      if (document.activeElement !== box) box.value = fmt(v, step);
+      box.placeholder = m ? 'Mixed' : '';
+      if (document.activeElement !== box) box.value = m ? '' : fmt(v, step);
     },
   };
 }
 
-function numberInput(label, { step = 1, get, set }) {
+function numberInput(label, { step = 1, get, set, mixed }) {
   const box = document.createElement('input');
   box.type = 'number';
   box.step = step;
@@ -614,7 +744,9 @@ function numberInput(label, { step = 1, get, set }) {
   return {
     el: lab,
     update() {
-      if (document.activeElement !== box) box.value = fmt(get(), step);
+      const m = !!mixed?.();
+      box.placeholder = m ? 'Mixed' : '';
+      if (document.activeElement !== box) box.value = m ? '' : fmt(get(), step);
     },
   };
 }
@@ -631,8 +763,12 @@ function pair(label, a, b) {
   return { el: row, update() { a.update(); b.update(); } };
 }
 
-function select(label, { options, get, set, disabled }) {
+function select(label, { options, get, set, mixed, disabled }) {
   const sel = document.createElement('select');
+  const mixedOpt = new Option('Mixed', '');
+  mixedOpt.disabled = true;
+  mixedOpt.hidden = true;
+  sel.append(mixedOpt);
   for (const o of options) {
     const opt = document.createElement('option');
     opt.value = o.id;
@@ -643,13 +779,13 @@ function select(label, { options, get, set, disabled }) {
   return {
     el: fieldRow(label, sel),
     update() {
-      sel.value = get();
+      sel.value = mixed?.() ? '' : get();
       sel.disabled = !!disabled?.();
     },
   };
 }
 
-function checkbox(label, { get, set }) {
+function checkbox(label, { get, set, mixed }) {
   const lab = document.createElement('label');
   lab.className = 'check';
   const box = document.createElement('input');
@@ -658,7 +794,13 @@ function checkbox(label, { get, set }) {
   span.textContent = label;
   lab.append(box, span);
   box.addEventListener('change', () => edit(() => set(box.checked)));
-  return { el: lab, update() { box.checked = !!get(); } };
+  return {
+    el: lab,
+    update() {
+      box.checked = !!get();
+      box.indeterminate = !!mixed?.();
+    },
+  };
 }
 
 function text(label, { get, set }) {
@@ -673,7 +815,7 @@ function text(label, { get, set }) {
   };
 }
 
-function color(label, { get, set }) {
+function color(label, { get, set, mixed }) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'swatch-btn';
@@ -681,7 +823,14 @@ function color(label, { get, set }) {
     onInput: (hex) => mutate(() => set(hex)),
     onCommit: commit,
   });
-  return { el: fieldRow(label, btn), update() { field.setValue(get()); } };
+  return {
+    el: fieldRow(label, btn),
+    update() {
+      field.setValue(get());
+      btn.classList.toggle('mixed', !!mixed?.());
+      btn.title = mixed?.() ? 'Mixed: the selected shapes have different colors' : '';
+    },
+  };
 }
 
 function lightPad() {
@@ -729,7 +878,7 @@ function section(title, controls, { advanced = [] } = {}) {
   const el = document.createElement('section');
   el.className = 'insp-section';
   const h = document.createElement('h2');
-  h.textContent = title;
+  const setTitle = () => { h.textContent = typeof title === 'function' ? title() : title; };
   el.append(h, ...controls.map((c) => c.el));
   let all = controls;
   if (advanced.length) {
@@ -744,18 +893,41 @@ function section(title, controls, { advanced = [] } = {}) {
     el.append(det);
     all = [...controls, ...advanced];
   }
-  return { el, update() { for (const c of all) c.update(); } };
+  return {
+    el,
+    update() {
+      setTitle();
+      for (const c of all) c.update();
+    },
+  };
+}
+
+// Shown only while exactly one shape is selected.
+function singleOnly(ctrl) {
+  return {
+    el: ctrl.el,
+    update() {
+      ctrl.el.hidden = state.ui.selected.length > 1;
+      if (!ctrl.el.hidden) ctrl.update();
+    },
+  };
 }
 
 function buildInspector(root) {
-  const sh = () => selectedShape();
-  const shapeSet = (fn) => (v) => forShape(state.ui.selected, (s) => fn(s, v));
+  const sh = () => primaryShape();
+  const shapeSet = (fn) => (v) => forSelected((s) => fn(s, v));
+  const mixedOf = (read) => () => {
+    const all = selectedShapes();
+    return all.some((s) => read(s) !== read(all[0]));
+  };
   const styleCtl = (key) => ({
     get: () => sh().style[key],
+    mixed: mixedOf((s) => s.style[key]),
     set: shapeSet((s, v) => { s.style[key] = v; }),
   });
   const geoCtl = (key) => ({
     get: () => sh()[key],
+    mixed: mixedOf((s) => s[key]),
     set: shapeSet((s, v) => { s[key] = key === 'w' || key === 'h' ? Math.max(1, v) : v; }),
   });
 
@@ -783,15 +955,15 @@ function buildInspector(root) {
     checkbox('No background (transparent)', { get: () => variant().background.transparent, set: (v) => forBackground((b) => { b.transparent = v; }) }),
   ]);
 
-  const shapeSec = section('Shape', [
-    text('Name', { get: () => sh().name, set: shapeSet((s, v) => { s.name = v; }) }),
+  const shapeSec = section(() => (state.ui.selected.length > 1 ? `${state.ui.selected.length} shapes` : 'Shape'), [
+    singleOnly(text('Name', { get: () => sh().name, set: shapeSet((s, v) => { s.name = v; }) })),
     select('Layer', { options: M.LAYERS, ...geoCtl('layer') }),
     select('Kind', {
       options: [{ id: 'rect', label: 'Rectangle' }, { id: 'ellipse', label: 'Ellipse' }],
       ...geoCtl('kind'),
     }),
-    pair('Position', numberInput('X', { step: 0.5, ...geoCtl('x') }), numberInput('Y', { step: 0.5, ...geoCtl('y') })),
-    pair('Size', numberInput('W', { step: 0.5, ...geoCtl('w') }), numberInput('H', { step: 0.5, ...geoCtl('h') })),
+    singleOnly(pair('Position', numberInput('X', { step: 0.5, ...geoCtl('x') }), numberInput('Y', { step: 0.5, ...geoCtl('y') }))),
+    singleOnly(pair('Size', numberInput('W', { step: 0.5, ...geoCtl('w') }), numberInput('H', { step: 0.5, ...geoCtl('h') }))),
     slider('Corner radius', { min: 0, max: 54, step: 0.5, ...geoCtl('radius') }),
     slider('Rotation', { min: -180, max: 180, step: 1, ...geoCtl('rotation') }),
   ]);
@@ -799,7 +971,7 @@ function buildInspector(root) {
   const lookSec = section('Look', [
     color('Color', styleCtl('color')),
     select('Material', { options: M.MATERIALS, ...styleCtl('material') }),
-    select('Surface', { options: M.SURFACES, ...styleCtl('surface'), disabled: () => sh().style.material === 'glass' }),
+    select('Surface', { options: M.SURFACES, ...styleCtl('surface'), disabled: () => selectedShapes().every((s) => s.style.material === 'glass') }),
     slider('Elevation', { min: 0, max: 3, step: 0.05, ...styleCtl('elevation') }),
     slider('Thickness', { min: 0, max: 2, step: 0.05, ...styleCtl('thickness') }),
     checkbox('Rounded edge (fillet)', styleCtl('fillet')),
@@ -888,7 +1060,11 @@ async function openFile(file) {
 
 function setupFileDrop() {
   let depth = 0;
-  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  // Some Linux file managers announce a dragged file only as a file URL list.
+  const hasFiles = (e) => {
+    const types = [...(e.dataTransfer?.types || [])];
+    return types.includes('Files') || types.includes('text/uri-list');
+  };
   document.addEventListener('dragenter', (e) => {
     if (!hasFiles(e)) return;
     depth += 1;
@@ -912,6 +1088,7 @@ function setupFileDrop() {
     if (isDialogOpen() || !$('export-overlay').hidden) return;
     const f = e.dataTransfer.files[0];
     if (f) openFile(f);
+    else toast('The browser did not pass the dropped file. Use Open instead.', 'error');
   });
 }
 
@@ -1067,15 +1244,15 @@ function onKey(e) {
   if (mod && k === 'z') { e.preventDefault(); (e.shiftKey ? redo : undo)(); return; }
   if (mod && k === 'y') { e.preventDefault(); redo(); return; }
   if (mod && k === 'd') { e.preventDefault(); duplicateShape(); return; }
-  if (e.key === 'Escape') { state.ui.selected = null; scheduleRender(); return; }
+  if (e.key === 'Escape') { setSelection([]); return; }
+  if (mod && k === 'a') { e.preventDefault(); setSelection(variant().shapes.filter((s) => !s.hidden).map((s) => s.id)); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteShape(); return; }
   const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-  const s = selectedShape();
-  if (arrows[e.key] && s) {
+  if (arrows[e.key] && state.ui.selected.length) {
     e.preventDefault();
     const step = e.shiftKey ? 10 : 1;
     const [dx, dy] = arrows[e.key];
-    edit(() => forShape(s.id, (x) => { x.x = round2(s.x + dx * step); x.y = round2(s.y + dy * step); }));
+    edit(() => forSelected((x) => { x.x = round2(x.x + dx * step); x.y = round2(x.y + dy * step); }));
   }
 }
 
