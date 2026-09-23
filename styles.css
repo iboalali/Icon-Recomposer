@@ -393,7 +393,7 @@ legend { color: var(--muted); font-size: 12px; padding: 0 0.3rem; }
 .shape-list li.empty { cursor: default; }
 .stage-frame.no-bg { background: repeating-conic-gradient(#2a2f3a 0 25%, #1f232d 0 50%) 0 0 / 16px 16px; }
 body.file-drag::after {
-  content: "Drop a project file to open it";
+  content: "Drop a project file to open it, or a VectorDrawable to import it";
   position: fixed;
   inset: 10px;
   z-index: 90;
@@ -441,3 +441,6 @@ body.file-drag::after {
 .tbtn.small.icon { min-width: 26px; padding: 0.2rem 0.35rem; font-size: 14px; }
 .canvas-box.pannable { cursor: grab; }
 .canvas-box.panning { cursor: grabbing; }
+.guide-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.guide-layer path { fill-opacity: 0.28; stroke: #ff5ac8; stroke-width: 1px; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.guide-controls { display: inline-flex; align-items: center; gap: 0.5rem; }

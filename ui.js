@@ -12,6 +12,7 @@ import {
 } from './export.js';
 import { confirmDialog, isDialogOpen } from './dialog.js';
 import { createColorField } from './colorpicker.js';
+import { importVectorDrawable, looksLikeVectorDrawable } from './vdimport.js';
 
 const STORAGE_KEY = 'icon-recomposer-2/doc';
 const EXPORT_PREFS_KEY = 'icon-recomposer-2/export';
@@ -237,6 +238,28 @@ function renderStage() {
   stageRoot.innerHTML = stageMarkup(variant(), { pxPerUnit: state.ui.zoom * devicePixelRatio });
   $('stage-frame').classList.toggle('no-bg', variant().background.transparent);
   $('guides').hidden = !state.ui.guides;
+  renderTraceGuide();
+}
+
+let guideDrawn = null;
+function renderTraceGuide() {
+  const g = state.doc.guide;
+  $('guide-controls').hidden = !g;
+  const layer = $('guide-layer');
+  layer.hidden = !g || !g.visible;
+  if (!g) return;
+  $('show-trace').checked = g.visible;
+  $('trace-label').textContent = `Tracing guide (${g.name})`;
+  if (guideDrawn === g) return;
+  guideDrawn = g;
+  const NS = 'http://www.w3.org/2000/svg';
+  layer.replaceChildren(...g.paths.map((p) => {
+    const el = document.createElementNS(NS, 'path');
+    el.setAttribute('d', p.d);
+    el.setAttribute('fill', p.fill);
+    if (p.evenOdd) el.setAttribute('fill-rule', 'evenodd');
+    return el;
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1287,12 +1310,12 @@ let inspector = { update() {} };
 // ---------------------------------------------------------------------------
 // files
 
-function toast(message, kind = '') {
+function toast(message, kind = '', ms = 3500) {
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
   el.textContent = message;
   document.body.append(el);
-  setTimeout(() => el.remove(), 3500);
+  setTimeout(() => el.remove(), ms);
 }
 
 function confirmReplace(title, confirmLabel) {
@@ -1320,10 +1343,35 @@ function saveProject() {
   scheduleRender();
 }
 
+// Adds the drawing's convertible paths as shapes (to the current variant, or to
+// every variant with "Apply edits to all variants") and shows the whole drawing
+// as the tracing guide.
+async function importFile(file) {
+  let result;
+  try {
+    result = importVectorDrawable(await file.text(), file.name);
+  } catch (err) {
+    toast(`${file.name}: ${err.message}`, 'error');
+    return;
+  }
+  const { shapes, guide, skipped, notes } = result;
+  edit(() => {
+    for (const v of targets()) v.shapes.push(...structuredClone(shapes));
+    state.doc.guide = guide;
+  });
+  setSelection(shapes.map((s) => s.id));
+  const parts = [`Imported ${shapes.length} shape${shapes.length === 1 ? '' : 's'} from ${file.name}.`];
+  if (skipped.length) parts.push(`Not converted, see the tracing guide: ${skipped.join(', ')}.`);
+  parts.push(...notes);
+  toast(parts.join(' '), skipped.length || notes.length ? 'warn' : '', 8000);
+}
+
 async function openFile(file) {
+  const text = await file.text();
+  if (looksLikeVectorDrawable(text)) return importFile(file);
   let doc;
   try {
-    doc = M.parseProject(await file.text());
+    doc = M.parseProject(text);
   } catch (err) {
     toast(`${file.name}: ${err.message}`, 'error');
     return;
@@ -1680,6 +1728,14 @@ async function init() {
     if (f) openFile(f);
   });
   $('btn-save').addEventListener('click', saveProject);
+  $('btn-import').addEventListener('click', () => $('file-import').click());
+  $('file-import').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (f) importFile(f);
+  });
+  $('show-trace').addEventListener('change', (e) => edit(() => { state.doc.guide.visible = e.target.checked; }));
+  $('btn-trace-remove').addEventListener('click', () => edit(() => { state.doc.guide = null; }));
   $('btn-undo').addEventListener('click', undo);
   $('btn-redo').addEventListener('click', redo);
   $('btn-export').addEventListener('click', openExport);

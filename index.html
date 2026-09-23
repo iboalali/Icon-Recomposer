@@ -21,12 +21,14 @@
       <button class="tbtn" id="btn-new" type="button">New</button>
       <button class="tbtn" id="btn-open" type="button" title="Open project (Ctrl+O)">Open</button>
       <button class="tbtn" id="btn-save" type="button" title="Save project (Ctrl+S)">Save</button>
+      <button class="tbtn" id="btn-import" type="button" title="Import an Android VectorDrawable as shapes">Import…</button>
       <span class="spacer"></span>
       <button class="tbtn icon" id="btn-undo" type="button" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
       <button class="tbtn icon" id="btn-redo" type="button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
       <button class="tbtn primary" id="btn-export" type="button">Export PNG…</button>
     </div>
     <input id="file-open" type="file" accept=".icjson,.json,application/json" hidden />
+    <input id="file-import" type="file" accept=".xml,text/xml,application/xml" hidden />
   </header>
 
   <main class="workspace">
@@ -62,6 +64,7 @@
         <div class="stage-frame" id="stage-frame">
           <div class="stage-host" id="stage-host"></div>
           <div class="overlay" id="overlay">
+            <svg class="guide-layer" id="guide-layer" viewBox="0 0 108 108" hidden></svg>
             <div class="guides" id="guides" hidden>
               <div class="guide-viewport"></div>
               <div class="guide-safe"></div>
@@ -84,6 +87,10 @@
       </div>
       <div class="canvas-bar">
         <label class="check"><input type="checkbox" id="show-guides" /> <span>Android guides</span></label>
+        <span class="guide-controls" id="guide-controls" hidden>
+          <label class="check"><input type="checkbox" id="show-trace" /> <span id="trace-label">Tracing guide</span></label>
+          <button class="tbtn small" id="btn-trace-remove" type="button" title="Remove the tracing guide">Remove</button>
+        </span>
         <span class="spacer"></span>
         <div class="zoom-controls">
           <button class="tbtn small" id="btn-zoom-sel" type="button" title="Zoom to selection (Shift+2)">Zoom to selection</button>

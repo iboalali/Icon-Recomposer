@@ -122,6 +122,7 @@ export function newDocument() {
     app: APP_VERSION,
     name: 'icon',
     variants: [newVariant()],
+    guide: null,
   };
 }
 
@@ -250,6 +251,17 @@ function normalizeCrossings(list, shapes) {
   return out;
 }
 
+// The tracing guide: an imported drawing shown faintly over the canvas while
+// editing. It belongs to the document, not to a variant, and is never exported.
+function normalizeGuide(g) {
+  if (!g || !Array.isArray(g.paths)) return null;
+  const paths = g.paths
+    .filter((p) => p && typeof p.d === 'string' && p.d)
+    .map((p) => ({ d: p.d, fill: hex(p.fill, '#9e9e9e'), evenOdd: !!p.evenOdd }));
+  if (!paths.length) return null;
+  return { name: typeof g.name === 'string' ? g.name : 'guide', paths, visible: g.visible !== false };
+}
+
 // Throws with a readable message when the JSON is not a project of this app.
 export function parseProject(text) {
   let data;
@@ -273,6 +285,7 @@ export function parseProject(text) {
     app: APP_VERSION,
     name: typeof data.name === 'string' && data.name ? data.name : 'icon',
     variants,
+    guide: normalizeGuide(data.guide),
   };
 }
 

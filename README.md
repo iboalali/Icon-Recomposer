@@ -11,6 +11,7 @@ A browser editor for lit, layered app icons. Place shapes, give them depth and m
 - **Set the light:** drag the dot in the light pad, and adjust key and fill light. The light shades every shape and the background.
 - **Make variants:** duplicate the current variant from the strip under the canvas and change colors, light or anything else. Turn on **Apply edits to all variants** to change every variant at once.
 - **Choose layers:** each shape belongs to the adaptive icon's foreground or background layer.
+- **Import a VectorDrawable** to start from an existing Android icon: simple shapes and straight-edged outlines become editable shapes, and the whole drawing stays visible as a tracing guide.
 - **Export PNG:** Play Store 512 px, legacy launcher icons at every density, adaptive icon layers with their XML, or custom sizes, for one variant or all. Several files download as one zip laid out like an Android `res/` folder.
 - Work is saved in the browser automatically. **Save** and **Open** use `.icjson` project files.
 
