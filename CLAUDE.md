@@ -49,6 +49,7 @@ Version 2 is a rewrite. The 1.x app (gradient emboss that round-tripped to Vecto
 - Each shape is an absolutely positioned `div.ir-shape.ambient` with ambientcss classes for surface (`amb-surface`, `-concave`, `-concave-h`, `-convex`, `amb-groove`) and material (`amb-mat-*`; glass replaces the surface class) and inline `--amb-*` variables.
 - box-shadow offsets and the shiny gradient live in the element's rotated frame, so each shape gets `--amb-light-x/y` rotated back by its own angle (`localLight`).
 - Fillet and chamfer bands are drawn by our own `div.ir-edge` inside each shape, not by ambient.css: the shape sets `--amb-chamfer:0; --amb-fillet:0` and `--ir-chamfer`/`--ir-fillet` instead. `.ir-edge` repeats ambient.css's band offsets, widths and alpha fits, but the highlight is a lighter shade of `--amb-lit` (mixed toward white by `--ir-edge-shine`) instead of the lamp's white, which on colored shapes read as a white outline.
+- Wood is our own material, not ambientcss's: the shape gets `ir-wood` plus its surface class, and a `div.ir-grain` inside it multiplies a darker shade of `--amb-albedo` through a seamless SVG noise mask (`WOOD_TILE`), so the grain follows the surface shading. The mask sits on a rotated square (`woodMarkup`, `woodAngle`) that `.ir-grain` clips to the shape.
 - Glow is a separate `div.ir-halo` behind the shape, because ambientcss's `.amb-glow` would replace the shape's own box-shadow stack.
 - Known ambientcss cascade effect: curved surfaces set the `background` shorthand, which wins over shiny's gradient layers.
 

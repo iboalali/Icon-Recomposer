@@ -18,6 +18,23 @@ const SURFACE_CLASS = {
   groove: 'amb-groove',
 };
 
+// Wood figure as an alpha mask, 256px square and seamless. Growth lines are
+// contours of low-frequency noise stretched along x, cut into thin bands by a
+// periodic table; fine high-frequency streaks along x add the fibers.
+const WOOD_BANDS = Array.from({ length: 25 }, (_, i) => (i % 2 ? 1 : 0)).join(' ');
+const WOOD_TILE = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256">
+<filter id="w" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+<feTurbulence type="fractalNoise" baseFrequency="0.00390625 0.0234375" numOctaves="2" seed="7" stitchTiles="stitch"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0"/>
+<feComponentTransfer><feFuncA type="table" tableValues="${WOOD_BANDS}"/></feComponentTransfer>
+<feComponentTransfer result="bands"><feFuncA type="gamma" amplitude="1" exponent="2.2" offset="0"/></feComponentTransfer>
+<feTurbulence type="fractalNoise" baseFrequency="0.015625 0.5" numOctaves="2" seed="3" stitchTiles="stitch"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 0 0 0 -0.75" result="fibers"/>
+<feComposite in="bands" in2="fibers" operator="arithmetic" k2="1" k3="0.4"/>
+</filter>
+<rect width="100%" height="100%" filter="url(#w)"/>
+</svg>`;
+
 const BASE_CSS = `
 .ir-stage { position: relative; width: ${CANVAS}px; height: ${CANVAS}px; overflow: hidden; }
 .ir-shape, .ir-halo { position: absolute; box-sizing: border-box; }
@@ -37,6 +54,27 @@ const BASE_CSS = `
   --_glass-blur: calc(
     (var(--amb-elevation) * 1.51 + var(--amb-thickness) * 0.63) * var(--_ir-lo) * 1px + var(--_ir-hi) * 6px
   );
+}
+/* Wood: the figure darkens whatever the surface already paints (shading,
+   curvature), so it is multiplied over it inside the shape's own group. */
+.ir-shape.ir-wood { isolation: isolate; }
+.ir-grain {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: min(1, calc(var(--amb-grain-amount) * 0.7));
+}
+.ir-grain > div {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: color-mix(in oklab, var(--amb-albedo), black 30%);
+  mask-image: url("data:image/svg+xml,${encodeURIComponent(WOOD_TILE)}");
+  mask-size: calc(var(--ir-wood-scale) * 128px);
+  mask-position: center;
 }
 .ir-edge {
   position: absolute;
@@ -116,6 +154,14 @@ function geometryCss(shape) {
   return css;
 }
 
+// The figure is a square covering the shape at any angle, turned to the grain
+// direction and clipped back to the shape by .ir-grain.
+function woodMarkup(shape) {
+  if (shape.style.material !== 'wood') return '';
+  const d = Math.ceil(Math.hypot(shape.w, shape.h)) + 2;
+  return `<div class="ir-grain"><div style="width:${d}px;height:${d}px;margin:${-d / 2}px 0 0 ${-d / 2}px;transform:rotate(${num(shape.style.woodAngle)}deg)"></div></div>`;
+}
+
 // extra: CSS appended to the element and its glow, e.g. a crossing clip-path.
 function shapeMarkup(shape, scene, extra = '') {
   const st = shape.style;
@@ -124,7 +170,8 @@ function shapeMarkup(shape, scene, extra = '') {
     classes.push('amb-mat-glass');
   } else {
     classes.push(SURFACE_CLASS[st.surface] || 'amb-surface');
-    if (st.material !== 'matte') classes.push(`amb-mat-${st.material}`);
+    if (st.material === 'wood') classes.push('ir-wood');
+    else if (st.material !== 'matte') classes.push(`amb-mat-${st.material}`);
   }
   const light = localLight(scene, shape.rotation || 0);
   const vars = [
@@ -144,6 +191,7 @@ function shapeMarkup(shape, scene, extra = '') {
     `--ir-frost:${num(st.frost)}`,
     `--amb-curve-scale:${num(st.curveScale)}`,
     `--amb-grain-amount:${num(st.grain)}`,
+    `--ir-wood-scale:${num(st.woodScale)}`,
   ].join(';');
   const geo = geometryCss(shape) + extra;
   const opacity = st.opacity < 1 ? `opacity:${num(st.opacity)};` : '';
@@ -152,7 +200,7 @@ function shapeMarkup(shape, scene, extra = '') {
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
   const edge = st.chamfer || st.fillet ? '<div class="ir-edge"></div>' : '';
-  out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars}">${edge}</div>`;
+  out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars}">${woodMarkup(shape)}${edge}</div>`;
   return out;
 }
 

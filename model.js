@@ -26,6 +26,7 @@ export const MATERIALS = [
   { id: 'brushed', label: 'Brushed metal' },
   { id: 'brushed-round', label: 'Brushed (radial)' },
   { id: 'blasted', label: 'Blasted' },
+  { id: 'wood', label: 'Wood' },
 ];
 
 export const LAYERS = [
@@ -79,6 +80,8 @@ export function defaultStyle() {
     frost: 0.3,
     curveScale: 1,
     grain: 1,
+    woodAngle: 0,
+    woodScale: 1,
     glow: false,
     glowColor: '#7fd6ff',
     glowSize: 6,
@@ -186,6 +189,8 @@ function normalizeStyle(s = {}) {
     frost: clamp(s.frost, 0, 1, d.frost),
     curveScale: clamp(s.curveScale, 0, 4, d.curveScale),
     grain: clamp(s.grain, 0, 3, d.grain),
+    woodAngle: clamp(s.woodAngle, -90, 90, d.woodAngle),
+    woodScale: clamp(s.woodScale, 0.25, 4, d.woodScale),
     glow: !!s.glow,
     glowColor: hex(s.glowColor, d.glowColor),
     glowSize: clamp(s.glowSize, 0, 30, d.glowSize),

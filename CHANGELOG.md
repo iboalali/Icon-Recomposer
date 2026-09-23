@@ -25,6 +25,7 @@ Version 2 is a complete rewrite. The app is now an editor for lit, layered icons
 - **Android guides** on the canvas for the launcher view and the safe zone.
 - **Zoom and pan the canvas.** Zoom with the mouse wheel or a trackpad pinch toward the pointer (up to 16×), or with the + and − buttons and Ctrl/Cmd + = / − / 0. **Zoom to selection** (Shift+2) frames the selected shapes, **Fit** (Shift+1) shows the whole canvas. Pan with the middle mouse button, Space-drag, or two fingers on a touch screen. The icon stays sharp at every zoom, and zooming never changes the exports.
 - **Frost** for frosted glass: from clear glass through the default frost to a near-opaque milky pane that shows only a hint of what is behind it.
+- **Wood material.** Plank wood grain in a darker shade of the shape's own color, so the color picks the species, from pale pine to walnut. The grain follows the surface's shading and turns with the shape. **Grain direction** sets its angle; under Advanced, **Grain** sets how strong it is and **Grain scale** how wide the growth lines are.
 - The editor reopens the variant you had selected.
 - Your work is saved in the browser automatically, and projects can be saved and opened as `.icjson` files.
 - **Drag and drop** a project file anywhere on the page to open it. If the current icon has changes that are not saved to a file, the app asks before replacing it, for Open and New as well. A `•` in the tab title marks unsaved changes.
