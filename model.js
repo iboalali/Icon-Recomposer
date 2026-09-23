@@ -9,7 +9,7 @@
 // each one. Coordinates are in canvas units: the icon canvas is CANVAS x CANVAS,
 // the Android adaptive-icon 108dp grid.
 
-export const APP_VERSION = '2.0.0-alpha.1';
+export const APP_VERSION = '2.0.0-alpha.2';
 export const SCHEMA_VERSION = 1;
 export const FORMAT = 'icon-recomposer/2';
 export const CANVAS = 108;
