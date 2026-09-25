@@ -19,14 +19,28 @@ export const SCHEMA_VERSION = 1;
 export const FORMAT = 'icon-recomposer/2';
 export const CANVAS = 108;
 
+// `group` sorts the material picker into sections.
 export const MATERIALS = [
-  { id: 'matte', label: 'Matte' },
-  { id: 'shiny', label: 'Shiny' },
-  { id: 'glass', label: 'Frosted glass' },
-  { id: 'brushed', label: 'Brushed metal' },
-  { id: 'brushed-round', label: 'Brushed (radial)' },
-  { id: 'blasted', label: 'Blasted' },
-  { id: 'wood', label: 'Wood' },
+  { id: 'matte', label: 'Matte', group: 'Basic' },
+  { id: 'shiny', label: 'Shiny', group: 'Basic' },
+  { id: 'glass', label: 'Frosted glass', group: 'Basic' },
+  { id: 'enamel', label: 'Enamel', group: 'Basic' },
+  { id: 'ceramic', label: 'Ceramic', group: 'Basic' },
+  { id: 'brushed', label: 'Brushed metal', group: 'Metal' },
+  { id: 'brushed-round', label: 'Brushed (radial)', group: 'Metal' },
+  { id: 'blasted', label: 'Blasted', group: 'Metal' },
+  { id: 'marble', label: 'Marble', group: 'Stone' },
+  { id: 'granite', label: 'Granite', group: 'Stone' },
+  { id: 'terrazzo', label: 'Terrazzo', group: 'Stone' },
+  { id: 'slate', label: 'Slate', group: 'Stone' },
+  { id: 'concrete', label: 'Concrete', group: 'Stone' },
+  { id: 'wood', label: 'Wood', group: 'Natural' },
+  { id: 'cork', label: 'Cork', group: 'Natural' },
+  { id: 'paper', label: 'Paper', group: 'Natural' },
+  { id: 'cardboard', label: 'Cardboard', group: 'Natural' },
+  { id: 'carbon', label: 'Carbon fiber', group: 'Special' },
+  { id: 'holographic', label: 'Holographic', group: 'Special' },
+  { id: 'neon', label: 'Neon', group: 'Special' },
 ];
 
 export const WOOD_FIGURES = [
@@ -34,10 +48,38 @@ export const WOOD_FIGURES = [
   { id: 'rings', label: 'End grain (rings)' },
 ];
 
-export const WOOD_FINISHES = [
+export const FINISHES = [
   { id: 'matte', label: 'Matte' },
-  { id: 'varnish', label: 'Varnished' },
+  { id: 'satin', label: 'Satin' },
+  { id: 'gloss', label: 'Glossy' },
 ];
+
+export const TONES = [
+  { id: 'dark', label: 'Darker than the stone' },
+  { id: 'light', label: 'Lighter than the stone' },
+];
+
+// The texture settings a material starts with when it is picked. Materials
+// share these fields (angle, scale, amount, finish, tone), each reading them
+// in its own way.
+const MATERIAL_DEFAULTS = {
+  marble: { finish: 'gloss' },
+  granite: { finish: 'gloss' },
+  terrazzo: { texAmount: 0.5, finish: 'satin' },
+  concrete: { texAmount: 0.4 },
+  slate: { texAmount: 0.5 },
+  carbon: { finish: 'gloss' },
+  ceramic: { finish: 'gloss', texAmount: 0 },
+  enamel: { texAmount: 0.5 },
+  holographic: { texAmount: 0.3 },
+  neon: { texAmount: 0.6 },
+  cardboard: { texAmount: 0.6 },
+  cork: { texAmount: 0.4 },
+};
+
+export function materialDefaults(material) {
+  return { texAngle: 0, texScale: 1, texAmount: 0.5, finish: 'matte', grain: 1, ...MATERIAL_DEFAULTS[material] };
+}
 
 export const LAYERS = [
   { id: 'foreground', label: 'Foreground' },
@@ -91,9 +133,12 @@ export function defaultStyle() {
     curveScale: 1,
     grain: 1,
     woodFigure: 'plank',
-    woodFinish: 'matte',
-    woodAngle: 0,
-    woodScale: 1,
+    finish: 'matte',
+    texTone: 'dark',
+    texAngle: 0,
+    texScale: 1,
+    texAmount: 0.5,
+    accent: '#e9e3d6',
     glow: false,
     glowColor: '#7fd6ff',
     glowSize: 6,
@@ -202,9 +247,12 @@ function normalizeStyle(s = {}) {
     curveScale: clamp(s.curveScale, 0, 4, d.curveScale),
     grain: clamp(s.grain, 0, 3, d.grain),
     woodFigure: pick(s.woodFigure, WOOD_FIGURES, d.woodFigure),
-    woodFinish: pick(s.woodFinish, WOOD_FINISHES, d.woodFinish),
-    woodAngle: clamp(s.woodAngle, -90, 90, d.woodAngle),
-    woodScale: clamp(s.woodScale, 0.25, 4, d.woodScale),
+    finish: pick(s.finish ?? (s.woodFinish === 'varnish' ? 'gloss' : s.woodFinish), FINISHES, d.finish),
+    texTone: pick(s.texTone, TONES, d.texTone),
+    texAngle: clamp(s.texAngle ?? s.woodAngle, -90, 90, d.texAngle),
+    texScale: clamp(s.texScale ?? s.woodScale, 0.25, 4, d.texScale),
+    texAmount: clamp(s.texAmount, 0, 1, d.texAmount),
+    accent: hex(s.accent, d.accent),
     glow: !!s.glow,
     glowColor: hex(s.glowColor, d.glowColor),
     glowSize: clamp(s.glowSize, 0, 30, d.glowSize),
@@ -385,7 +433,7 @@ export function shapesOverlap(a, b) {
 export const COPY_SHAPE_PARTS = [
   { id: 'geometry', label: 'Geometry (position, size, corners, rotation, kind)' },
   { id: 'look', label: 'Look (material, surface, depth, edges, opacity, glow)' },
-  { id: 'color', label: 'Colors (shape and glow color)' },
+  { id: 'color', label: 'Colors (shape, glow and accent color)' },
   { id: 'layer', label: 'Layer and visibility' },
 ];
 export const COPY_VARIANT_PARTS = [
@@ -397,7 +445,7 @@ export const COPY_VARIANT_PARTS = [
 ];
 
 const GEOMETRY_KEYS = ['kind', 'x', 'y', 'w', 'h', 'radius', 'rotation'];
-const COLOR_KEYS = ['color', 'glowColor'];
+const COLOR_KEYS = ['color', 'glowColor', 'accent'];
 
 // Copies the chosen parts of the shapes `ids` (and the chosen variant-wide
 // parts) from `src` into `dst`. Shapes are matched by id.

@@ -7,6 +7,7 @@
 // The markup is XHTML-safe: it is parsed as XML inside the capture SVG.
 
 import { CANVAS, paintOrder } from './model.js';
+import { TEXTURE_CSS, isTextured, neonFace, textureMarkup } from './textures.js';
 
 const AMBIENT_URL = new URL('./vendor/ambientcss/ambient.css', import.meta.url);
 
@@ -17,48 +18,6 @@ const SURFACE_CLASS = {
   convex: 'amb-surface-convex',
   groove: 'amb-groove',
 };
-
-// Wood figure as an alpha mask, 256px square and seamless. Growth lines are
-// contours of low-frequency noise stretched along x, cut into thin bands by a
-// periodic table; fine high-frequency streaks along x add the fibers.
-const WOOD_BANDS = Array.from({ length: 25 }, (_, i) => (i % 2 ? 1 : 0)).join(' ');
-const WOOD_TILE = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256">
-<filter id="w" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
-<feTurbulence type="fractalNoise" baseFrequency="0.00390625 0.0234375" numOctaves="2" seed="7" stitchTiles="stitch"/>
-<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0"/>
-<feComponentTransfer><feFuncA type="table" tableValues="${WOOD_BANDS}"/></feComponentTransfer>
-<feComponentTransfer result="bands"><feFuncA type="gamma" amplitude="1" exponent="2.2" offset="0"/></feComponentTransfer>
-<feTurbulence type="fractalNoise" baseFrequency="0.015625 0.5" numOctaves="2" seed="3" stitchTiles="stitch"/>
-<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 0 0 0 -0.75" result="fibers"/>
-<feComposite in="bands" in2="fibers" operator="arithmetic" k2="1" k3="0.4"/>
-</filter>
-<rect width="100%" height="100%" filter="url(#w)"/>
-</svg>`;
-
-// End grain as one alpha mask, 1024px square: growth rings of uneven spacing and
-// width around a pith slightly off center, wobbled by noise and speckled with
-// pores. Rings reach past the corners, so the square is covered everywhere.
-const WOOD_RINGS = (() => {
-  let seed = 11;
-  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  let rings = '';
-  for (let r = 3; r < 740; r += 7 + rnd() * 7) {
-    rings += `<circle r="${r.toFixed(1)}" stroke-width="${(1.5 + rnd() * 3).toFixed(2)}" stroke-opacity="${(0.45 + rnd() * 0.45).toFixed(2)}"/>`;
-  }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">
-<filter id="r" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024" color-interpolation-filters="sRGB">
-<feTurbulence type="fractalNoise" baseFrequency="0.006" numOctaves="3" seed="5"/>
-<feDisplacementMap in="SourceGraphic" scale="36" xChannelSelector="R" yChannelSelector="G"/>
-<feGaussianBlur stdDeviation="0.6" result="rings"/>
-<feTurbulence type="fractalNoise" baseFrequency="0.5" numOctaves="1" seed="9"/>
-<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3 0 0 0 -1.7" result="pores"/>
-<feComposite in="rings" in2="pores" operator="arithmetic" k2="1" k3="0.2"/>
-</filter>
-<g filter="url(#r)"><g transform="translate(500 488)" fill="none" stroke="#000">${rings}</g></g>
-</svg>`;
-})();
-
-const maskUrl = (svg) => `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 
 const BASE_CSS = `
 .ir-stage { position: relative; width: ${CANVAS}px; height: ${CANVAS}px; overflow: hidden; }
@@ -79,40 +38,6 @@ const BASE_CSS = `
   --_glass-blur: calc(
     (var(--amb-elevation) * 1.51 + var(--amb-thickness) * 0.63) * var(--_ir-lo) * 1px + var(--_ir-hi) * 6px
   );
-}
-/* Wood: the figure darkens whatever the surface already paints (shading,
-   curvature), so it is multiplied over it inside the shape's own group. */
-.ir-shape.ir-wood { isolation: isolate; }
-.ir-grain {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  overflow: hidden;
-  pointer-events: none;
-  mix-blend-mode: multiply;
-  opacity: min(1, calc(var(--amb-grain-amount) * 0.7));
-}
-.ir-grain > div {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  background: color-mix(in oklab, var(--amb-albedo), black 30%);
-  mask-image: ${maskUrl(WOOD_TILE)};
-  mask-size: calc(var(--ir-wood-scale) * 128px);
-  mask-position: center;
-}
-.ir-grain > .ir-rings {
-  mask-image: ${maskUrl(WOOD_RINGS)};
-  mask-size: calc(var(--ir-wood-scale) * 512px);
-  mask-repeat: no-repeat;
-}
-/* Varnish is ambient.css's shiny sheen on its own layer above the grain, so
-   the reflection is not darkened by the figure under it. */
-.ir-varnish {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
 }
 .ir-edge {
   position: absolute;
@@ -153,7 +78,7 @@ export function iconCss() {
         if (!r.ok) throw new Error(`Could not load ambient.css (${r.status})`);
         return r.text();
       })
-      .then((css) => css.replace(/:root\s*\{/, ':root, .ir-stage {') + BASE_CSS);
+      .then((css) => css.replace(/:root\s*\{/, ':root, .ir-stage {') + BASE_CSS + TEXTURE_CSS);
   }
   return cssPromise;
 }
@@ -192,28 +117,17 @@ function geometryCss(shape) {
   return css;
 }
 
-// The figure is a square covering the shape at any angle, turned to the grain
-// direction (for rings, the side the off-center pith lies on) and clipped back
-// to the shape by .ir-grain.
-function woodMarkup(shape) {
-  if (shape.style.material !== 'wood') return '';
-  const st = shape.style;
-  const d = Math.ceil(Math.hypot(shape.w, shape.h)) + 2;
-  const figure = st.woodFigure === 'rings' ? ' class="ir-rings"' : '';
-  const varnish = st.woodFinish === 'varnish' ? '<div class="ir-varnish amb-mat-shiny"></div>' : '';
-  return `<div class="ir-grain"><div${figure} style="width:${d}px;height:${d}px;margin:${-d / 2}px 0 0 ${-d / 2}px;transform:rotate(${num(st.woodAngle)}deg)"></div></div>${varnish}`;
-}
-
 // extra: CSS appended to the element and its glow, e.g. a crossing clip-path.
 function shapeMarkup(shape, scene, extra = '') {
   const st = shape.style;
   const classes = ['ir-shape', 'ambient'];
+  const neon = st.material === 'neon';
   if (st.material === 'glass') {
     classes.push('amb-mat-glass');
   } else {
-    classes.push(SURFACE_CLASS[st.surface] || 'amb-surface');
-    if (st.material === 'wood') classes.push('ir-wood');
-    else if (st.material !== 'matte') classes.push(`amb-mat-${st.material}`);
+    classes.push(neon ? 'amb-surface' : SURFACE_CLASS[st.surface] || 'amb-surface');
+    if (isTextured(st.material)) classes.push('ir-textured');
+    else if (st.material !== 'matte' && !neon) classes.push(`amb-mat-${st.material}`);
   }
   const light = localLight(scene, shape.rotation || 0);
   const vars = [
@@ -233,16 +147,22 @@ function shapeMarkup(shape, scene, extra = '') {
     `--ir-frost:${num(st.frost)}`,
     `--amb-curve-scale:${num(st.curveScale)}`,
     `--amb-grain-amount:${num(st.grain)}`,
-    `--ir-wood-scale:${num(st.woodScale)}`,
   ].join(';');
   const geo = geometryCss(shape) + extra;
   const opacity = st.opacity < 1 ? `opacity:${num(st.opacity)};` : '';
   let out = '';
-  if (st.glow && st.glowSize > 0) {
+  if (neon && st.glowSize > 0) {
+    const g = num(st.glowSize);
+    out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(g / 3)}px ${num(g / 8)}px ${st.color},0 0 ${g}px ${num(g / 3)}px ${st.color}"></div>`;
+  } else if (st.glow && st.glowSize > 0) {
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
+  if (neon) {
+    out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars};box-shadow:none">${neonFace(shape)}</div>`;
+    return out;
+  }
   const edge = st.chamfer || st.fillet ? '<div class="ir-edge"></div>' : '';
-  out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars}">${woodMarkup(shape)}${edge}</div>`;
+  out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars}">${textureMarkup(shape, light)}${edge}</div>`;
   return out;
 }
 
@@ -349,8 +269,8 @@ const clipCss = (pts) => `clip-path:polygon(${pts.map(([x, y]) => `${num(x)}px $
 // drop-shadow layer (offset + blur + spread at the longest light component),
 // plus its glow.
 function inkReach(shape) {
-  const { elevation: e, thickness: k, glow, glowSize } = shape.style;
-  return e * 6.8 + k * 3.8 + e * 4.8 + k * 2.7 + 1 + (glow ? glowSize * 1.4 : 0) + 2;
+  const { elevation: e, thickness: k, glow, glowSize, material } = shape.style;
+  return e * 6.8 + k * 3.8 + e * 4.8 + k * 2.7 + 1 + (glow || material === 'neon' ? glowSize * 1.4 : 0) + 2;
 }
 
 const ring = (pts) => `M${pts.map(([x, y]) => `${num(x)} ${num(y)}`).join('L')}Z`;

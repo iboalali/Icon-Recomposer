@@ -971,11 +971,22 @@ function select(label, { options, get, set, mixed, disabled }) {
   mixedOpt.disabled = true;
   mixedOpt.hidden = true;
   sel.append(mixedOpt);
+  const groups = new Map();
   for (const o of options) {
     const opt = document.createElement('option');
     opt.value = o.id;
     opt.textContent = o.label;
-    sel.append(opt);
+    if (!o.group) {
+      sel.append(opt);
+      continue;
+    }
+    if (!groups.has(o.group)) {
+      const g = document.createElement('optgroup');
+      g.label = o.group;
+      groups.set(o.group, g);
+      sel.append(g);
+    }
+    groups.get(o.group).append(opt);
   }
   sel.addEventListener('change', () => edit(() => set(sel.value)));
   return {
@@ -1260,36 +1271,71 @@ function buildInspector(root) {
     actionButton('Copy to variants…', () => openCopy('selected'), () => state.doc.variants.length < 2),
   ]);
 
+  // Controls that only some materials read, each with the material's own label.
+  const isMat = (...ids) => () => selectedShapes().some((s) => ids.includes(s.style.material));
+  const onlyMat = (...ids) => () => selectedShapes().every((s) => ids.includes(s.style.material));
+  const angle = (label, ...ids) => showWhen(isMat(...ids), slider(label, { min: -90, max: 90, step: 1, ...styleCtl('texAngle') }));
+  const scale = (label, ...ids) => showWhen(isMat(...ids), slider(label, { min: 0.25, max: 4, step: 0.05, ...styleCtl('texScale') }));
+  const amount = (label, ...ids) => showWhen(isMat(...ids), slider(label, { min: 0, max: 1, step: 0.01, ...styleCtl('texAmount') }));
+  // Neon is self-lit, so depth, edge and shading controls do nothing for it.
+  const lit = (ctrl) => showWhen(() => !onlyMat('neon')(), ctrl);
+  const finish = (label, ...ids) => showWhen(isMat(...ids), select(label, { options: M.FINISHES, ...styleCtl('finish') }));
+
   const lookSec = section('Look', [
     color('Color', styleCtl('color')),
-    select('Material', { options: M.MATERIALS, ...styleCtl('material') }),
-    showWhen(() => selectedShapes().some((s) => s.style.material === 'glass'),
-      slider('Frost', { min: 0, max: 1, step: 0.01, ...styleCtl('frost') })),
-    showWhen(() => selectedShapes().some((s) => s.style.material === 'wood'),
-      select('Figure', { options: M.WOOD_FIGURES, ...styleCtl('woodFigure') })),
-    showWhen(() => selectedShapes().some((s) => s.style.material === 'wood'),
-      select('Finish', { options: M.WOOD_FINISHES, ...styleCtl('woodFinish') })),
-    showWhen(() => selectedShapes().some((s) => s.style.material === 'wood'),
-      slider('Grain direction', { min: -90, max: 90, step: 1, ...styleCtl('woodAngle') })),
-    select('Surface', { options: M.SURFACES, ...styleCtl('surface'), disabled: () => selectedShapes().every((s) => s.style.material === 'glass') }),
-    slider('Elevation', { min: 0, max: 3, step: 0.05, ...styleCtl('elevation') }),
-    slider('Thickness', { min: 0, max: 2, step: 0.05, ...styleCtl('thickness') }),
-    checkbox('Rounded edge (fillet)', styleCtl('fillet')),
-    checkbox('Beveled edge (chamfer)', styleCtl('chamfer')),
+    select('Material', {
+      options: M.MATERIALS,
+      ...styleCtl('material'),
+      set: shapeSet((s, v) => { Object.assign(s.style, { material: v }, M.materialDefaults(v)); }),
+    }),
+    showWhen(isMat('glass'), slider('Frost', { min: 0, max: 1, step: 0.01, ...styleCtl('frost') })),
+    showWhen(isMat('wood'), select('Figure', { options: M.WOOD_FIGURES, ...styleCtl('woodFigure') })),
+    showWhen(isMat('marble'), select('Veins', { options: M.TONES, ...styleCtl('texTone') })),
+    showWhen(isMat('terrazzo'), color('Chip color', styleCtl('accent'))),
+    finish('Finish', 'wood', 'marble', 'granite', 'terrazzo'),
+    finish('Clear coat', 'carbon'),
+    finish('Glaze', 'ceramic'),
+    angle('Grain direction', 'wood'),
+    angle('Layer direction', 'slate'),
+    angle('Weave direction', 'carbon'),
+    angle('Stripe direction', 'cardboard'),
+    amount('Chips', 'terrazzo'),
+    amount('Pits', 'concrete'),
+    amount('Speckles', 'ceramic'),
+    amount('Diffraction lines', 'holographic'),
+    amount('Core brightness', 'neon'),
+    amount('Corrugation', 'cardboard'),
+    amount('Pores', 'cork'),
+    showWhen(isMat('neon'), slider('Glow size', { min: 0, max: 30, step: 0.5, ...styleCtl('glowSize') })),
+    select('Surface', { options: M.SURFACES, ...styleCtl('surface'), disabled: onlyMat('glass', 'neon') }),
+    lit(slider('Elevation', { min: 0, max: 3, step: 0.05, ...styleCtl('elevation') })),
+    lit(slider('Thickness', { min: 0, max: 2, step: 0.05, ...styleCtl('thickness') })),
+    lit(checkbox('Rounded edge (fillet)', styleCtl('fillet'))),
+    lit(checkbox('Beveled edge (chamfer)', styleCtl('chamfer'))),
     slider('Opacity', { min: 0, max: 1, step: 0.01, ...styleCtl('opacity') }),
   ], {
     advanced: [
-      slider('Fillet width', { min: -2, max: 2, step: 0.1, ...styleCtl('filletWidth') }),
-      slider('Chamfer width', { min: -2, max: 2, step: 0.1, ...styleCtl('chamferWidth') }),
-      slider('Edge shine', { min: 0, max: 1, step: 0.05, ...styleCtl('edgeShine') }),
-      slider('Shade', { min: 0, max: 2, step: 0.01, ...styleCtl('shade') }),
-      slider('Curve depth', { min: 0, max: 4, step: 0.05, ...styleCtl('curveScale') }),
-      slider('Grain', { min: 0, max: 3, step: 0.05, ...styleCtl('grain') }),
-      showWhen(() => selectedShapes().some((s) => s.style.material === 'wood'),
-        slider('Grain scale', { min: 0.25, max: 4, step: 0.05, ...styleCtl('woodScale') })),
-      checkbox('Glow', styleCtl('glow')),
-      color('Glow color', styleCtl('glowColor')),
-      slider('Glow size', { min: 0, max: 30, step: 0.5, ...styleCtl('glowSize') }),
+      lit(slider('Fillet width', { min: -2, max: 2, step: 0.1, ...styleCtl('filletWidth') })),
+      lit(slider('Chamfer width', { min: -2, max: 2, step: 0.1, ...styleCtl('chamferWidth') })),
+      lit(slider('Edge shine', { min: 0, max: 1, step: 0.05, ...styleCtl('edgeShine') })),
+      lit(slider('Shade', { min: 0, max: 2, step: 0.01, ...styleCtl('shade') })),
+      lit(slider('Curve depth', { min: 0, max: 4, step: 0.05, ...styleCtl('curveScale') })),
+      showWhen(() => !onlyMat('neon', 'enamel', 'ceramic')(), slider('Texture strength', { min: 0, max: 3, step: 0.05, ...styleCtl('grain') })),
+      scale('Grain scale', 'wood'),
+      scale('Vein scale', 'marble'),
+      scale('Speckle size', 'granite'),
+      scale('Chip size', 'terrazzo'),
+      scale('Texture scale', 'concrete', 'paper'),
+      scale('Layer scale', 'slate'),
+      scale('Weave scale', 'carbon'),
+      scale('Band width', 'holographic'),
+      scale('Stripe spacing', 'cardboard'),
+      scale('Granule size', 'cork'),
+      amount('Roughness', 'slate'),
+      amount('Highlight sharpness', 'enamel'),
+      lit(checkbox('Glow', styleCtl('glow'))),
+      lit(color('Glow color', styleCtl('glowColor'))),
+      lit(slider('Glow size', { min: 0, max: 30, step: 0.5, ...styleCtl('glowSize') })),
     ],
   });
 
