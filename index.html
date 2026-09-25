@@ -26,6 +26,7 @@
       <button class="tbtn icon" id="btn-undo" type="button" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
       <button class="tbtn icon" id="btn-redo" type="button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
       <button class="tbtn primary" id="btn-export" type="button">Export PNG…</button>
+      <button class="tbtn" id="btn-about" type="button">About</button>
     </div>
     <input id="file-open" type="file" accept=".icjson,.json,application/json" hidden />
     <input id="file-import" type="file" accept=".xml,text/xml,application/xml" hidden />
@@ -191,6 +192,28 @@
       <div class="dlg-actions">
         <button class="tbtn" id="copy-cancel" type="button">Cancel</button>
         <button class="tbtn primary" id="copy-go" type="button">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dlg-overlay" id="about-overlay" hidden>
+    <div class="dlg about-dlg" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <div class="about-head">
+        <img class="about-icon" src="assets/brand-64.png" alt="" />
+        <div>
+          <h2 class="dlg-title" id="about-title">Icon Recomposer</h2>
+          <p class="hint" id="about-version"></p>
+        </div>
+      </div>
+      <p class="about-text">Design lit, layered app icons in the browser and export many variants as PNG. Your work stays in your browser.</p>
+      <p class="about-links">
+        <a href="https://iboalali.com/app/icon_recomposer/?utm_source=icon-recomposer&amp;utm_medium=app" target="_blank" rel="noopener noreferrer">Website</a>
+        <a href="https://iboalali.com/app/icon_recomposer/privacy/?utm_source=icon-recomposer&amp;utm_medium=app" target="_blank" rel="noopener noreferrer">Privacy policy</a>
+      </p>
+      <h3 class="about-sub">Changelog</h3>
+      <div class="about-log" id="about-log"></div>
+      <div class="dlg-actions">
+        <button class="tbtn" id="about-close" type="button">Close</button>
       </div>
     </div>
   </div>

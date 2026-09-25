@@ -293,6 +293,22 @@ legend { color: var(--muted); font-size: 12px; padding: 0 0.3rem; }
 .dlg-confirm.danger { border-color: #c0463a; color: #ff6b5e; }
 .dlg-confirm.danger:hover { border-color: #ff6b5e; }
 
+/* ---- about dialog ---- */
+.dlg.about-dlg { width: min(94vw, 520px); display: flex; flex-direction: column; max-height: 88vh; }
+.about-head { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0.6rem; }
+.about-head .dlg-title { margin: 0; }
+.about-head .hint { margin: 0.1rem 0 0; }
+.about-icon { width: 48px; height: 48px; border-radius: 12px; }
+.about-text { margin: 0 0 0.6rem; }
+.about-links { display: flex; gap: 1rem; margin: 0 0 0.9rem; }
+.about-links a, .about-log a { color: var(--accent); }
+.about-sub { margin: 0 0 0.4rem; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.about-log { overflow: auto; min-height: 0; flex: 1 1 auto; margin-bottom: 1rem; border: 1px solid var(--line-2); border-radius: 10px; padding: 0.3rem 0.8rem 0.6rem; }
+.about-log h4 { margin: 0.6rem 0 0.25rem; font-size: 13px; font-weight: 650; }
+.about-log h4 .hint { font-weight: 400; margin-left: 0.4rem; }
+.about-log ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.3rem; }
+.about-log li { color: var(--muted); }
+
 /* ---- toast ---- */
 .toast {
   position: fixed;

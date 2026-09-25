@@ -10,7 +10,7 @@ import { iconSheet, stageMarkup } from './render.js';
 import {
   PRESETS, REGIONS, MASKS, parseCustomSizes, planExport, runExport, renderCanvas, download,
 } from './export.js';
-import { confirmDialog, isDialogOpen } from './dialog.js';
+import { confirmDialog } from './dialog.js';
 import { createColorField } from './colorpicker.js';
 import { importVectorDrawable, looksLikeVectorDrawable } from './vdimport.js';
 
@@ -1416,7 +1416,7 @@ function setupFileDrop() {
     e.preventDefault();
     depth = 0;
     document.body.classList.remove('file-drag');
-    if (isDialogOpen() || !$('export-overlay').hidden || !$('copy-overlay').hidden) return;
+    if (modalOpen()) return;
     const f = e.dataTransfer.files[0];
     if (f) openFile(f);
     else toast('The browser did not pass the dropped file. Use Open instead.', 'error');
@@ -1675,7 +1675,98 @@ function doCopy() {
 }
 
 // ---------------------------------------------------------------------------
+// about dialog
+
+// The website publishes the changelog of every app in one file; this app's
+// entry is matched by name.
+const APPS_URL = 'https://iboalali.com/apps.json';
+const WEBSITE_URL = 'https://iboalali.com/app/icon_recomposer/?utm_source=icon-recomposer&utm_medium=app';
+let changelog = null;
+
+function loadChangelog() {
+  if (!changelog) {
+    changelog = fetch(APPS_URL)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        const app = (data.apps || []).find((a) => a.name === 'Icon Recomposer');
+        if (!app || !Array.isArray(app.changelog) || !app.changelog.length) throw new Error('No changelog');
+        return app.changelog;
+      });
+    changelog.catch(() => { changelog = null; });
+  }
+  return changelog;
+}
+
+function renderChangelog(list) {
+  const box = $('about-log');
+  box.replaceChildren();
+  for (const entry of list) {
+    const h = document.createElement('h4');
+    h.textContent = `Version ${entry.version}`;
+    if (entry.version === M.APP_VERSION) {
+      const tag = document.createElement('span');
+      tag.className = 'hint';
+      tag.textContent = 'this version';
+      h.append(tag);
+    }
+    const ul = document.createElement('ul');
+    for (const change of entry.changes || []) {
+      const li = document.createElement('li');
+      li.textContent = change;
+      ul.append(li);
+    }
+    box.append(h, ul);
+  }
+}
+
+function changelogMessage(text, withLink) {
+  const p = document.createElement('p');
+  p.className = 'hint';
+  p.textContent = text;
+  if (withLink) {
+    const a = document.createElement('a');
+    a.href = WEBSITE_URL;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = 'website';
+    p.append(' It is also on the ', a, '.');
+  }
+  $('about-log').replaceChildren(p);
+}
+
+function setupAboutDialog() {
+  const overlay = $('about-overlay');
+  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) closeAbout(); });
+  overlay.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') closeAbout();
+  });
+  $('about-close').addEventListener('click', closeAbout);
+  $('about-version').textContent = `Version ${M.APP_VERSION}`;
+}
+
+function openAbout() {
+  $('about-overlay').hidden = false;
+  $('about-close').focus();
+  changelogMessage('Loading the changelog…');
+  loadChangelog().then(renderChangelog, () => changelogMessage('The changelog could not be loaded.', true));
+}
+
+function closeAbout() {
+  $('about-overlay').hidden = true;
+}
+
+// ---------------------------------------------------------------------------
 // keyboard
+
+// Any in-page dialog: confirm, export, copy or about. App shortcuts and file
+// drops are ignored while one is open.
+function modalOpen() {
+  return !!document.querySelector('.dlg-overlay:not([hidden])');
+}
 
 function isTyping(e) {
   const t = e.target;
@@ -1683,7 +1774,7 @@ function isTyping(e) {
 }
 
 function onKey(e) {
-  if (isDialogOpen() || !$('export-overlay').hidden || !$('copy-overlay').hidden) return;
+  if (modalOpen()) return;
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
   if (mod && (k === '=' || k === '+')) { e.preventDefault(); zoomBy(1.25); return; }
@@ -1747,6 +1838,7 @@ async function init() {
   $('btn-undo').addEventListener('click', undo);
   $('btn-redo').addEventListener('click', redo);
   $('btn-export').addEventListener('click', openExport);
+  $('btn-about').addEventListener('click', openAbout);
   $('btn-add-rect').addEventListener('click', () => addShape('rect'));
   $('btn-add-ellipse').addEventListener('click', () => addShape('ellipse'));
   $('btn-shape-up').addEventListener('click', () => moveShape(1));
@@ -1782,6 +1874,7 @@ async function init() {
 
   setupExportDialog();
   setupCopyDialog();
+  setupAboutDialog();
   fitStage();
   render();
 }
