@@ -7,7 +7,7 @@
 // The markup is XHTML-safe: it is parsed as XML inside the capture SVG.
 
 import { CANVAS, paintOrder } from './model.js';
-import { TEXTURE_CSS, coversEdge, isTextured, metalVars, neonFace, textureMarkup } from './textures.js';
+import { TEXTURE_CSS, ambientMaterial, coversEdge, isTextured, metalSurface, metalVars, neonFace, textureMarkup, underlayMarkup } from './textures.js';
 
 const AMBIENT_URL = new URL('./vendor/ambientcss/ambient.css', import.meta.url);
 
@@ -151,13 +151,12 @@ function shapeMarkup(shape, scene, extra = '') {
   const st = shape.style;
   const classes = ['ir-shape', 'ambient'];
   const neon = st.material === 'neon';
-  if (st.material === 'glass') {
-    classes.push('amb-mat-glass');
-  } else {
-    classes.push(neon ? 'amb-surface' : SURFACE_CLASS[st.surface] || 'amb-surface');
-    if (isTextured(st.material)) classes.push('ir-textured');
-    else if (st.material !== 'matte' && !neon) classes.push(`amb-mat-${st.material}`);
-  }
+  const textured = isTextured(st.material);
+  // The ambient.css material: the shape's own, or the one a texture builds on.
+  const amb = textured ? ambientMaterial(st) : st.material !== 'matte' && !neon ? st.material : null;
+  if (amb !== 'glass') classes.push(neon ? 'amb-surface' : SURFACE_CLASS[st.surface] || 'amb-surface');
+  if (amb) classes.push(`amb-mat-${amb}`);
+  if (textured) classes.push('ir-textured', `ir-${st.material}`);
   const light = localLight(scene, shape.rotation || 0);
   const vars = [
     `--amb-light-x:${num(light.x)}`,
@@ -176,7 +175,7 @@ function shapeMarkup(shape, scene, extra = '') {
     `--ir-frost:${num(st.frost)}`,
     `--amb-curve-scale:${num(st.curveScale)}`,
     `--amb-grain-amount:${num(st.grain)}`,
-  ].join(';') + metalVars(shape);
+  ].join(';') + metalVars(shape, amb) + metalSurface(shape, light);
   const geo = geometryCss(shape) + extra;
   const opacity = st.opacity < 1 ? `opacity:${num(st.opacity)};` : '';
   let out = '';
@@ -186,6 +185,7 @@ function shapeMarkup(shape, scene, extra = '') {
   } else if (st.glow && st.glowSize > 0) {
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
+  out += underlayMarkup(shape, scene, geo);
   if (neon) {
     out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars};box-shadow:none">${neonFace(shape)}</div>`;
     return out;

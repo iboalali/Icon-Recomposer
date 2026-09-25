@@ -256,6 +256,75 @@ function fiberMask(key, seed, count, len, width) {
   });
 }
 
+// Woven cloth as a seamless tile of n×n thread crossings, 16px each. At each
+// crossing weftOver(i, j) says whether the weft (running along x) or the warp
+// (along y) is on top. Every thread has its own slightly uneven width; `fill`
+// is how much of its 16px a thread takes. Parts:
+//   weft: the weft where it is on top; hlWeft, hlWarp: a highlight along the
+//   middle of each thread on top; shade: the sides of the threads on top and
+//   the stubs of the thread diving under; gap: the holes between threads.
+function weave(name, seed, n, weftOver, fill, part) {
+  return mask(`${name}:${seed}:${part}`, () => {
+    const c = 16;
+    const size = n * c;
+    const wy = Array.from({ length: n }, (_, j) => c * (fill[0] + rand(seed + 41, j) * (fill[1] - fill[0])));
+    const wx = Array.from({ length: n }, (_, i) => c * (fill[0] + rand(seed + 43, i) * (fill[1] - fill[0])));
+    const rect = (x, y, w, h, f, r = 0) => (w > 0.05 && h > 0.05 ? `<rect x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(h)}"${r ? ` rx="${r}"` : ''} fill="${f}"/>` : '');
+    let body = '';
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const x0 = i * c;
+        const y0 = j * c;
+        const top = (c - wy[j]) / 2;
+        const left = (c - wx[i]) / 2;
+        const weft = (f, r) => rect(x0, y0 + top, c, wy[j], f, r);
+        const warp = (f, r) => rect(x0 + left, y0, wx[i], c, f, r);
+        const onTop = weftOver(i, j);
+        if (part === 'weft' && onTop) body += weft('#000', 5);
+        if (part === 'hlWeft' && onTop) body += weft('url(#h)', 4);
+        if (part === 'hlWarp' && !onTop) body += warp('url(#v)', 4);
+        if (part === 'shade') {
+          if (onTop) {
+            body += weft('url(#eh)') + rect(x0 + left, y0, wx[i], top, '#000') + rect(x0 + left, y0 + top + wy[j], wx[i], top, '#000');
+          } else {
+            body += warp('url(#ev)') + rect(x0, y0 + top, left, wy[j], '#000') + rect(x0 + left + wx[i], y0 + top, left, wy[j], '#000');
+          }
+        }
+        if (part === 'gap') {
+          for (const [x, w] of [[x0, left], [x0 + left + wx[i], left]]) {
+            body += rect(x, y0, w, top, '#000') + rect(x, y0 + top + wy[j], w, top, '#000');
+          }
+        }
+      }
+    }
+    const hl = '<stop offset="0" stop-opacity="0"/><stop offset="0.5" stop-opacity="1"/><stop offset="1" stop-opacity="0"/>';
+    const edge = '<stop offset="0" stop-opacity="0.9"/><stop offset="0.3" stop-opacity="0"/><stop offset="0.7" stop-opacity="0"/><stop offset="1" stop-opacity="0.9"/>';
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><defs>
+<linearGradient id="h" x1="0" y1="0" x2="0" y2="1">${hl}</linearGradient>
+<linearGradient id="v" x1="0" y1="0" x2="1" y2="0">${hl}</linearGradient>
+<linearGradient id="eh" x1="0" y1="0" x2="0" y2="1">${edge}</linearGradient>
+<linearGradient id="ev" x1="0" y1="0" x2="1" y2="0">${edge}</linearGradient>
+</defs>${body}</svg>`;
+  });
+}
+const denimWeave = (seed, part) => weave('denim', seed, 8, (i, j) => (i + j) % 4 === 0, [0.86, 0.96], part);
+const canvasWeave = (seed, part) => weave('canvas', seed, 8, (i, j) => (i + j) % 2 === 0, [0.7, 0.88], part);
+
+// A dashed seam `inset` units inside the shape's outline, in canvas units, so
+// the stitches keep their length on any shape. Sub-pixel CSS borders would
+// vanish, since Chrome rounds border widths down to whole pixels.
+function stitchMask(shape, inset) {
+  const { w, h } = shape;
+  const key = `stitch:${shape.kind}:${num(w)}:${num(h)}:${num(shape.radius)}:${inset}`;
+  return mask(key, () => {
+    const line = 'fill="none" stroke="#000" stroke-width="0.55" stroke-dasharray="1.7 1.1" stroke-linecap="round"';
+    const body = shape.kind === 'ellipse'
+      ? `<ellipse cx="${num(w / 2)}" cy="${num(h / 2)}" rx="${num(w / 2 - inset)}" ry="${num(h / 2 - inset)}" ${line}/>`
+      : `<rect x="${inset}" y="${inset}" width="${num(w - inset * 2)}" height="${num(h - inset * 2)}" rx="${num(Math.max(0, Math.min(shape.radius, w / 2, h / 2) - inset))}" ${line}/>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${num(w * 8)}" height="${num(h * 8)}" viewBox="0 0 ${num(w)} ${num(h)}">${body}</svg>`;
+  });
+}
+
 // Crumpled paper as one 512px image: a jittered grid split into triangles
 // along random diagonals, each facet tilted a random way. The tilt is stored
 // as four masks (how much each facet faces -x, +x, -y, +y), so the light can
@@ -479,7 +548,120 @@ const TEXTURES = {
     if (st.texAmount > 0) layers.push({ mask: spotsBy('ck-pores', st.seed, st.texAmount, 128, 30, 2, 65, 30, 0.8, 0.1), size: 64, color: darker(65), blend: 'multiply', opacity: 1, turn: false });
     return layers;
   },
+  // 3/1 twill: the dyed warp floats over three pale weft threads and under
+  // one, so the weft shows as a diagonal of small light dots. The indigo
+  // varies along each warp thread, and wear fades it in patches and at the
+  // edges. Stitching runs just inside the outline.
+  denim: (st, light, shape) => {
+    const g = Math.min(1, st.grain);
+    const l = turn(light, st.texAngle);
+    const fade = st.texAmount;
+    const layers = [
+      { mask: denimWeave(st.seed, 'weft'), size: 7, color: lighter(60), blend: 'screen', opacity: 0.55 * g },
+      { mask: denimWeave(st.seed, 'shade'), size: 7, color: darker(45), blend: 'multiply', opacity: 0.5 * g },
+      { mask: denimWeave(st.seed, 'hlWarp'), size: 7, color: lighter(25), blend: 'screen', opacity: 0.35 * g, pos: { x: -l.x * 0.08, y: 0 } },
+      { mask: tileXY('dn-slub', st.seed, 256, 48, 2, 3, 71, 3, 0.55), size: 40, color: lighter(30), blend: 'screen', opacity: 0.35 * g },
+      { mask: tileXY('dn-dark', st.seed, 256, 64, 3, 2, 72, 3, 0.55), size: 40, color: darker(30), blend: 'multiply', opacity: 0.35 * g },
+    ];
+    if (fade > 0) {
+      layers.push(
+        { mask: tile('dn-fade', st.seed, 256, 2, 4, 73, 1.6, 0.45), size: 110, color: lighter(45), blend: 'screen', opacity: fade * 0.8, turn: false },
+        { fit: true, css: `box-shadow:inset 0 0 5px 1px ${lighter(50)}`, blend: 'screen', opacity: fade },
+      );
+    }
+    if (st.stitching) {
+      const m = stitchMask(shape, 2.6);
+      const sx = num(-light.x * 0.3);
+      const sy = num(-light.y * 0.3);
+      layers.push(
+        { fit: true, color: darker(55), css: `mask-image:${m};mask-size:100% 100%;translate:${sx}px ${sy}px`, opacity: 0.6 },
+        { fit: true, color: st.accent, css: `mask-image:${m};mask-size:100% 100%` },
+      );
+    }
+    return layers;
+  },
+  // Plain weave: each thread over one and under the next, rounded like a
+  // tube, with holes at the crossings. The highlight on each thread moves
+  // toward the light.
+  canvas: (st, light) => {
+    const g = Math.min(1, st.grain);
+    const k = st.texAmount;
+    const l = turn(light, st.texAngle);
+    return [
+      { mask: canvasWeave(st.seed, 'shade'), size: 7.2, color: darker(40), blend: 'multiply', opacity: (0.3 + 0.6 * k) * g },
+      { mask: canvasWeave(st.seed, 'gap'), size: 7.2, color: darker(65), blend: 'multiply', opacity: (0.4 + 0.6 * k) * g },
+      { mask: canvasWeave(st.seed, 'hlWeft'), size: 7.2, color: lighter(35), blend: 'screen', opacity: (0.2 + 0.4 * k) * g, pos: { x: 0, y: -l.y * 0.1 } },
+      { mask: canvasWeave(st.seed, 'hlWarp'), size: 7.2, color: lighter(35), blend: 'screen', opacity: (0.2 + 0.4 * k) * g, pos: { x: -l.x * 0.1, y: 0 } },
+      { mask: tileXY('cv-slub-x', st.seed, 256, 2, 36, 2, 74, 3, 0.58), size: 36, color: darker(20), blend: 'multiply', opacity: 0.5 * g },
+      { mask: tileXY('cv-slub-y', st.seed, 256, 36, 2, 2, 75, 3, 0.58), size: 36, color: lighter(20), blend: 'screen', opacity: 0.4 * g },
+      { mask: tile('cv-mottle', st.seed, 256, 3, 4, 76, 1.4, 0.4), size: 120, color: darker(10), blend: 'multiply', opacity: 0.5 * g, turn: false },
+    ];
+  },
+  // Felt: a dense mat of short fibers in every direction, no weave. The
+  // fibers at the outline catch the light, and a few stick out past it
+  // (feltFuzz), so the edge reads soft.
+  felt: (st) => {
+    const g = Math.min(1, st.grain);
+    return [
+      { mask: tile('fe-mottle', st.seed, 256, 4, 5, 77, 1.4, 0.4), size: 90, color: darker(14), blend: 'multiply', opacity: 0.6 * g },
+      { mask: fiberMask('fe-dark', st.seed, 1400, [6, 16], 1.1), size: 18, color: darker(24), blend: 'multiply', opacity: 0.55 * g },
+      { mask: fiberMask('fe-light', st.seed + 1, 1000, [6, 14], 1.1), size: 18, color: lighter(28), blend: 'screen', opacity: 0.45 * g },
+      { mask: tile('fe-fine', st.seed, 256, 180, 1, 78, 3, 0.5), size: 60, color: darker(10), blend: 'multiply', opacity: 0.5 * g },
+      { fit: true, css: `box-shadow:inset 0 0 1.4px 0.5px ${lighter(22)}`, opacity: st.fuzz },
+    ];
+  },
+  chrome: (st) => metalLayers(st),
+  gold: (st) => metalLayers(st),
+  copper: (st) => metalLayers(st),
+  // Anodized aluminum: ambient.css's metal relief over the shape color, with
+  // a clear, bright sheen that keeps the color saturated.
+  anodized: (st, light) => {
+    const a = num((Math.atan2(light.y, light.x) * 180) / Math.PI + 270);
+    return [
+      { color: 'var(--amb-albedo)', blend: 'color', opacity: 0.6, turn: false },
+      { fit: true, bg: `linear-gradient(${a}deg, ${lighter(45)} 0%, transparent 38%, transparent 70%, ${darker(30)} 100%)`, blend: 'soft-light' },
+    ];
+  },
+  // Jelly: a tinted glass pane. The body is deepest at the edges, light
+  // passing through glows on the far side, and the lit side has a soft rim
+  // and a highlight. Its colored shadow is jellyShadow.
+  jelly: (st, light) => {
+    const t = st.texAmount;
+    const g = st.innerGlow;
+    const at = (k) => `${num(50 + light.x * k)}% ${num(50 + light.y * k)}%`;
+    return [
+      { fit: true, color: 'var(--amb-albedo)', blend: 'multiply', opacity: 0.35 + t * 0.4 },
+      { fit: true, bg: `radial-gradient(farthest-corner at ${at(10)}, ${lighter(12)} 0%, var(--amb-albedo) 45%, ${darker(38)} 100%)`, opacity: 1 - t * 0.75 },
+      { fit: true, bg: `radial-gradient(ellipse 75% 65% at ${at(-32)}, ${lighter(60)} 0%, transparent 70%)`, blend: 'screen', opacity: g * 0.9 },
+      { fit: true, css: `box-shadow:inset 0 0 ${num(3 + 4 * g)}px ${num(0.5 + g)}px ${lighter(40)}`, blend: 'screen', opacity: g * 0.7 },
+      { fit: true, css: `box-shadow:inset ${num(-light.x * 1.3)}px ${num(-light.y * 1.3)}px 1.6px -0.3px rgb(255 255 255 / 0.7)` },
+      { fit: true, bg: `radial-gradient(ellipse 30% 20% at ${at(28)}, rgb(255 255 255 / 0.85) 0%, rgb(255 255 255 / 0.25) 50%, transparent 100%)` },
+    ];
+  },
 };
+
+// Mirror metals reflect a studio: a bright sky, a sharp horizon and a dark
+// floor, painted as the shape's own background (metalSurface). Layers only
+// add the satin grain and copper's patina.
+function metalLayers(st) {
+  const layers = [];
+  if (st.metalFinish === 'satin') {
+    layers.push(
+      { mask: tile('mt-satin', st.seed, 256, 180, 2, 81, 3, 0.5), size: 48, color: 'black', blend: 'multiply', opacity: 0.12, turn: false },
+      { mask: tile('mt-satin-l', st.seed, 256, 180, 1, 82, 6, 0.6), size: 48, color: 'white', blend: 'screen', opacity: 0.12, turn: false },
+    );
+  }
+  if (st.material === 'copper' && st.patina > 0) {
+    const p = st.patina;
+    const green = '#5aa894';
+    layers.push(
+      { mask: spotsBy('cu-patina', st.seed, p, 256, 4, 5, 83, 4, 0.78, 0.4), size: 100, color: green, opacity: 0.9, turn: false },
+      { mask: spotsBy('cu-patina-d', st.seed, p, 256, 8, 4, 84, 3, 0.8, 0.35), size: 100, color: '#3f8a78', blend: 'multiply', opacity: 0.35, turn: false },
+      { fit: true, css: `box-shadow:inset 0 0 ${num(3 + 6 * p)}px ${num(1 + 2 * p)}px ${green}`, opacity: Math.min(1, p * 1.4) },
+    );
+  }
+  return layers;
+}
 
 const HOLO_COLORS = {
   rainbow: [0, 50, 110, 180, 230, 290].map((h) => `hsl(${h} 90% 62%)`),
@@ -623,6 +805,144 @@ const FINISHED = new Set(['wood', 'marble', 'granite', 'terrazzo', 'carbon']);
 
 const RIM_METALS = { gold: '#d4a53c', silver: '#c3c8cf', black: '#3b3e44' };
 
+const METALS = new Set(['chrome', 'gold', 'copper']);
+
+// Dark, mid and bright tone of each mirror metal.
+const METAL_TONES = {
+  chrome: ['#15171b', '#8b929c', '#ffffff'],
+  yellow: ['#3d2503', '#c9962f', '#ffec9e'],
+  rose: ['#3a1810', '#c4826f', '#ffd9c8'],
+  white: ['#2a2925', '#b3ad9f', '#fffdf5'],
+  copper: ['#2f0f05', '#bb5f36', '#ffc7a3'],
+};
+
+function metalTones(st) {
+  const own = [`color-mix(in oklab, ${st.color}, black 82%)`, st.color, `color-mix(in oklab, ${st.color}, white 80%)`];
+  if (st.material === 'gold') return st.goldTone === 'shape' ? own : METAL_TONES[st.goldTone];
+  if (st.material === 'copper') return METAL_TONES.copper;
+  const t = num(st.tint * 100);
+  return t ? METAL_TONES.chrome.map((c, k) => `color-mix(in oklab, ${c}, ${own[k]} ${t}%)`) : METAL_TONES.chrome;
+}
+
+// The studio reflected in a mirror metal, as stops (position %, brightness
+// 0..1) from the side facing the light. `soft` widens every edge.
+//   horizon: the sky, a dark horizon at `at`, then the floor, which grows
+//   lighter toward the viewer. A convex face adds a hot band near the lit
+//   edge and dark far edges.
+//   softbox: a dark room with a broad light panel centered at `at` and a thin
+//   strip light beyond it, as in product shots. No floor line.
+// A concave face shows the studio upside down.
+function studio(kind, surface, at, soft) {
+  const convex = surface === 'convex';
+  let stops;
+  if (kind === 'softbox') {
+    const e = soft / 2 + 1;
+    stops = [[0, convex ? 0.2 : 0.45], [at - 12 - e, 0.3], [at - 12, 0.84], [at - 4, 1], [at + 6, 0.8], [at + 6 + e, 0.28], [at + 30, 0.18],
+      [at + 36, 0.62], [at + 39, 0.62], [at + 39 + e * 0.6, 0.2], [100, convex ? 0.12 : 0.35]];
+  } else if (convex) {
+    const a = Math.max(16, at - soft);
+    const b = Math.min(96, Math.max(at, a + 1) + soft + 1.5);
+    stops = [[0, 0.45], [5, 0.95], [14, 1], [(14 + a) / 2, 0.86], [a, 0.66], [Math.max(at, a + 1), 0.1], [b, 0.2],
+      [b + (100 - b) * 0.6, 0.42], [b + (100 - b) * 0.85, 0.58], [100, 0.3]];
+  } else {
+    const a = Math.max(6, at - soft - 5);
+    const h = Math.max(at, a + 6);
+    const b = Math.min(96, h + soft + 1.5);
+    stops = [[0, 0.92], [a * 0.3, 1], [a * 0.55, 0.8], [a * 0.8, 0.95], [a, 0.72], [h - soft, 0.62], [h, 0.1], [b, 0.22],
+      [b + (100 - b) * 0.45, 0.4], [b + (100 - b) * 0.75, 0.3], [100, 0.52]];
+  }
+  return surface === 'concave' ? stops.map(([p, v]) => [100 - p, v]).reverse() : stops;
+}
+
+// A mirror metal's inline CSS: its mid tone as the shape color (the edge
+// highlight and the texture layers derive from it) and the reflected studio
+// as its background, dimmed with the scene light. Curved faces bend the
+// studio along their own axis; flat ones and grooves turn it to the light.
+export function metalSurface(shape, light) {
+  const st = shape.style;
+  if (!METALS.has(st.material)) return '';
+  const [lo, mid, hi] = metalTones(st);
+  const tone = (v) => {
+    const x = Math.max(0, Math.min(1, v));
+    return x < 0.5 ? `color-mix(in oklab, ${lo}, ${mid} ${num(x * 200)}%)` : `color-mix(in oklab, ${mid}, ${hi} ${num((x - 0.5) * 200)}%)`;
+  };
+  const soft = { polished: 0.6, satin: 6, brushed: 3.5 }[st.metalFinish] + (1 - st.horizonSharp) * 18;
+  const k = (0.4 + 1.2 * st.texAmount) * (st.metalFinish === 'satin' ? 0.7 : 1);
+  const s = st.surface;
+  let dir;
+  if (s === 'convex' || s === 'concave') dir = light.y > 0 ? 'to top' : 'to bottom';
+  else if (s === 'concave-h') dir = light.x > 0 ? 'to left' : 'to right';
+  else dir = `${num((Math.atan2(light.y, light.x) * 180) / Math.PI + 270)}deg`;
+  const at = st.studio === 'softbox' ? 15 + st.horizon * 50 : 30 + st.horizon * 40;
+  const stops = studio(st.studio, s === 'concave-h' || s === 'groove' ? 'concave' : s, at, soft)
+    .map(([p, v]) => `${tone(0.5 + (v - 0.5) * k)} ${num(p)}%`).join(', ');
+  const dim = 'rgb(0 0 0 / calc(max(0, 1.6 - var(--amb-key-light-intensity) - var(--amb-fill-light-intensity)) * 0.55))';
+  return `;--amb-albedo:${mid};background:linear-gradient(${dim}, ${dim}), linear-gradient(${dir}, ${stops})`;
+}
+
+// The ambient.css material a texture builds on, if any.
+export function ambientMaterial(st) {
+  if (st.material === 'anodized') return st.anodTexture;
+  if (st.material === 'jelly') return 'glass';
+  if (METALS.has(st.material) && st.metalFinish === 'brushed') return 'brushed';
+  return null;
+}
+
+// The band from a shape's outline out to `d` units past it, as a mask for a
+// box that reaches `d` past the shape on every side. It starts a little
+// inside the outline, so no hairline of background shows between the band's
+// anti-aliased edge and the shape's.
+function ringMask(shape, d) {
+  const o = 0.2;
+  const w = shape.w - o * 2;
+  const h = shape.h - o * 2;
+  return mask(`ring:${shape.kind}:${num(shape.w)}:${num(shape.h)}:${num(shape.radius)}:${num(d)}`, () => {
+    const W = shape.w + d * 2;
+    const H = shape.h + d * 2;
+    const e = d + o;
+    let inner;
+    if (shape.kind === 'ellipse') {
+      const rx = w / 2;
+      const ry = h / 2;
+      inner = `M${num(e)} ${num(e + ry)}a${num(rx)} ${num(ry)} 0 1 0 ${num(w)} 0a${num(rx)} ${num(ry)} 0 1 0 ${num(-w)} 0Z`;
+    } else {
+      const r = Math.max(0, Math.min(shape.radius - o, w / 2, h / 2));
+      inner = `M${num(e + r)} ${num(e)}h${num(w - r * 2)}a${num(r)} ${num(r)} 0 0 1 ${num(r)} ${num(r)}v${num(h - r * 2)}a${num(r)} ${num(r)} 0 0 1 ${num(-r)} ${num(r)}h${num(r * 2 - w)}a${num(r)} ${num(r)} 0 0 1 ${num(-r)} ${num(-r)}v${num(r * 2 - h)}a${num(r)} ${num(r)} 0 0 1 ${num(r)} ${num(-r)}Z`;
+    }
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${num(W * 8)}" height="${num(H * 8)}" viewBox="0 0 ${num(W)} ${num(H)}"><path fill-rule="evenodd" d="M0 0H${num(W)}V${num(H)}H0Z${inner}"/></svg>`;
+  });
+}
+
+// Felt's stray fibers just past the outline: children of the shape reaching
+// out by up to `f`, masked to the band outside the outline, so they paint
+// over the shape's own drop shadow. Dense right at the outline, sparser
+// further out.
+function feltFuzz(shape) {
+  const st = shape.style;
+  const f = 0.2 + st.fuzz * 0.7;
+  const size = num(20 * st.texScale);
+  const ring = (d, fibers, css) => {
+    const radius = shape.kind === 'ellipse' ? '50%' : `${num(shape.radius + d)}px`;
+    const band = ringMask(shape, d);
+    const m = `mask-image:${fibers}, ${band};mask-size:${size}px, 100% 100%;mask-repeat:repeat, no-repeat;mask-composite:intersect;`;
+    return `<div class="ir-fuzz" style="inset:${num(-d)}px;border-radius:${radius};${m}${css}"></div>`;
+  };
+  return ring(f * 0.6, fiberMask('fe-fuzz', st.seed + 3, 1800, [8, 20], 2.4), 'opacity:0.85')
+    + ring(f, fiberMask('fe-fuzz2', st.seed + 4, 700, [8, 20], 1.8), 'opacity:0.4');
+}
+
+// Drawn right under the shape, in its geometry (geo): the colored light a
+// jelly lets through, falling away from the scene light.
+export function underlayMarkup(shape, scene, geo) {
+  const st = shape.style;
+  if (st.material === 'jelly') {
+    const e = st.elevation * 3 + st.thickness * 2.5;
+    const o = st.opacity * (0.2 + 0.25 * st.texAmount);
+    return `<div class="ir-halo" style="${geo}background:color-mix(in oklab, ${st.color}, black 10%);translate:${num(-scene.lightX * e)}px ${num(-scene.lightY * e)}px;filter:blur(${num(2 + e * 0.5)}px);opacity:${num(o)}"></div>`;
+  }
+  return '';
+}
+
 export const isTextured = (material) => material in TEXTURES;
 // An enamel's metal rim covers the shape's own edge highlight, which would
 // tint the metal with the enamel's color.
@@ -652,6 +972,17 @@ export const TEXTURE_CSS = `
 /* Finer sandblast grain than ambient.css's own tile, which is about a canvas
    unit across and reads as a blurry upscale at export size. */
 .ir-shape.amb-mat-blasted { --_grain-scale: 56px; --_grain-offset: 1px; }
+.ir-fuzz {
+  position: absolute;
+  background: color-mix(in oklab, var(--amb-lit), black 10%);
+  pointer-events: none;
+}
+/* A jelly's own colored shadow (underlayMarkup) replaces most of the glass's
+   gray one. */
+.ir-shape.ir-jelly.amb-mat-glass {
+  --_glass-ring-a: calc((0.2 + var(--amb-elevation) * 0.04) * var(--_glass-body) * 0.4);
+  --_glass-skirt-a: calc(var(--_glass-body) * var(--_glass-ring-lift) * (0.12 + min(var(--amb-elevation), 2) * 0.12) * 0.4);
+}
 `;
 
 // A fit layer follows the shape's own outline (inset by `inset` units)
@@ -697,20 +1028,22 @@ export function textureMarkup(shape, light) {
   const make = TEXTURES[st.material];
   if (!make) return '';
   const d = Math.ceil(Math.hypot(shape.w, shape.h)) + 2;
-  const layers = make(st, light).map((l) => layerMarkup(l, st, d)).join('');
+  const layers = make(st, light, shape).map((l) => layerMarkup(l, st, d)).join('');
   let out = `<div class="ir-tex">${layers}</div>`;
+  if (st.material === 'felt' && st.fuzz > 0) out += feltFuzz(shape);
   if (hasFinish(st.material) && st.finish !== 'matte') {
     out += `<div class="ir-sheen amb-mat-shiny${st.finish === 'satin' ? ' ir-satin' : ''}"></div>`;
   }
   return out;
 }
 
-// Shuffle for ambient.css's metals, through the hooks render.js adds: a new
+// Shuffle for ambient.css's metals (material: the ambient.css one the shape
+// uses), through the hooks render.js adds: a new
 // offset and length for the brushed streaks and the blasted grain, and for
 // radial brushed a new spin center, turn of the streaks and hotspot size.
 // Offsets stay whole pixels, which the grain's pixel snapping needs.
-export function metalVars(shape) {
-  const { seed, material } = shape.style;
+export function metalVars(shape, material) {
+  const { seed } = shape.style;
   if (!seed) return '';
   const r = (i) => rand(seed, i);
   if (material === 'brushed') {

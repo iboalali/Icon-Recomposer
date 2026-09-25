@@ -24,11 +24,16 @@ export const MATERIALS = [
   { id: 'matte', label: 'Matte', group: 'Basic' },
   { id: 'shiny', label: 'Shiny', group: 'Basic' },
   { id: 'glass', label: 'Frosted glass', group: 'Basic' },
+  { id: 'jelly', label: 'Jelly', group: 'Basic' },
   { id: 'enamel', label: 'Enamel', group: 'Basic' },
   { id: 'ceramic', label: 'Ceramic', group: 'Basic' },
   { id: 'brushed', label: 'Brushed metal', group: 'Metal' },
   { id: 'brushed-round', label: 'Brushed (radial)', group: 'Metal' },
   { id: 'blasted', label: 'Blasted', group: 'Metal' },
+  { id: 'chrome', label: 'Chrome', group: 'Metal' },
+  { id: 'gold', label: 'Gold', group: 'Metal' },
+  { id: 'copper', label: 'Copper', group: 'Metal' },
+  { id: 'anodized', label: 'Anodized aluminum', group: 'Metal' },
   { id: 'marble', label: 'Marble', group: 'Stone' },
   { id: 'granite', label: 'Granite', group: 'Stone' },
   { id: 'terrazzo', label: 'Terrazzo', group: 'Stone' },
@@ -38,6 +43,9 @@ export const MATERIALS = [
   { id: 'cork', label: 'Cork', group: 'Natural' },
   { id: 'paper', label: 'Paper', group: 'Natural' },
   { id: 'cardboard', label: 'Cardboard', group: 'Natural' },
+  { id: 'denim', label: 'Denim', group: 'Fabric' },
+  { id: 'canvas', label: 'Canvas', group: 'Fabric' },
+  { id: 'felt', label: 'Felt', group: 'Fabric' },
   { id: 'carbon', label: 'Carbon fiber', group: 'Special' },
   { id: 'holographic', label: 'Holographic', group: 'Special' },
   { id: 'neon', label: 'Neon', group: 'Special' },
@@ -100,6 +108,30 @@ export const HOLO_DIRECTIONS = [
   { id: 'fixed', label: 'Fixed angle' },
 ];
 
+export const METAL_FINISHES = [
+  { id: 'polished', label: 'Polished' },
+  { id: 'satin', label: 'Satin' },
+  { id: 'brushed', label: 'Brushed' },
+];
+
+export const STUDIOS = [
+  { id: 'horizon', label: 'Horizon' },
+  { id: 'softbox', label: 'Softbox' },
+];
+
+export const GOLD_TONES = [
+  { id: 'yellow', label: 'Yellow gold' },
+  { id: 'rose', label: 'Rose gold' },
+  { id: 'white', label: 'White gold' },
+  { id: 'shape', label: 'Shape color' },
+];
+
+export const ANODIZED_TEXTURES = [
+  { id: 'brushed', label: 'Brushed' },
+  { id: 'brushed-round', label: 'Brushed (radial)' },
+  { id: 'blasted', label: 'Bead-blasted' },
+];
+
 export const TONES = [
   { id: 'dark', label: 'Darker than the stone' },
   { id: 'light', label: 'Lighter than the stone' },
@@ -121,16 +153,24 @@ const MATERIAL_DEFAULTS = {
   neon: { texAmount: 0.6 },
   cardboard: { texAmount: 0, paperType: 'kraft' },
   cork: { texAmount: 0.4 },
+  jelly: { frost: 0.1 },
+  denim: { texAmount: 0.35, stitching: true, accent: '#d9a13b' },
+  canvas: { texAmount: 0.6 },
 };
 
 // Materials whose pattern Shuffle can change. Seed 0 is each pattern's
 // original layout.
-const SHUFFLED = new Set(['brushed', 'brushed-round', 'blasted', 'wood', 'marble', 'granite', 'terrazzo', 'slate', 'concrete', 'cork', 'paper', 'cardboard', 'ceramic', 'holographic']);
-export const shuffles = (st) => SHUFFLED.has(st.material) && (st.material !== 'holographic' || st.holoPattern === 'glitter');
+const SHUFFLED = new Set(['brushed', 'brushed-round', 'blasted', 'anodized', 'wood', 'marble', 'granite', 'terrazzo', 'slate', 'concrete', 'cork', 'paper', 'cardboard', 'denim', 'canvas', 'felt', 'ceramic']);
+export function shuffles(st) {
+  if (st.material === 'holographic') return st.holoPattern === 'glitter';
+  if (st.material === 'chrome' || st.material === 'gold') return st.metalFinish !== 'polished';
+  if (st.material === 'copper') return st.metalFinish !== 'polished' || st.patina > 0;
+  return SHUFFLED.has(st.material);
+}
 export const newSeed = () => 1 + Math.floor(Math.random() * 999999);
 
 export function materialDefaults(material) {
-  return { texAngle: 0, texScale: 1, texAmount: 0.5, finish: 'matte', grain: 1, crackle: 0, mottle: 0, rim: 'none', paperType: 'plain', crumple: 0, folds: 'none', holoPalette: 'rainbow', holoPattern: 'bands', holoBase: 'color', holoFollow: 'light', holoShift: 0.5, holoSharp: 0, ...MATERIAL_DEFAULTS[material] };
+  return { texAngle: 0, texScale: 1, texAmount: 0.5, finish: 'matte', grain: 1, crackle: 0, mottle: 0, rim: 'none', paperType: 'plain', crumple: 0, folds: 'none', holoPalette: 'rainbow', holoPattern: 'bands', holoBase: 'color', holoFollow: 'light', holoShift: 0.5, holoSharp: 0, metalFinish: 'polished', studio: 'horizon', horizon: 0.5, horizonSharp: 1, tint: 0, goldTone: 'yellow', patina: 0, anodTexture: 'brushed', innerGlow: 0.5, stitching: false, fuzz: 0.5, ...MATERIAL_DEFAULTS[material] };
 }
 
 export const LAYERS = [
@@ -205,6 +245,17 @@ export function defaultStyle() {
     holoShift: 0.5,
     holoSharp: 0,
     accent2: '#ff6fd8',
+    metalFinish: 'polished',
+    studio: 'horizon',
+    horizon: 0.5,
+    horizonSharp: 1,
+    tint: 0,
+    goldTone: 'yellow',
+    patina: 0,
+    anodTexture: 'brushed',
+    innerGlow: 0.5,
+    stitching: false,
+    fuzz: 0.5,
     glow: false,
     glowColor: '#7fd6ff',
     glowSize: 6,
@@ -333,6 +384,17 @@ function normalizeStyle(s = {}) {
     holoShift: clamp(s.holoShift, 0, 1, d.holoShift),
     holoSharp: clamp(s.holoSharp, 0, 1, d.holoSharp),
     accent2: hex(s.accent2, d.accent2),
+    metalFinish: pick(s.metalFinish, METAL_FINISHES, d.metalFinish),
+    studio: pick(s.studio, STUDIOS, d.studio),
+    horizon: clamp(s.horizon, 0, 1, d.horizon),
+    horizonSharp: clamp(s.horizonSharp, 0, 1, d.horizonSharp),
+    tint: clamp(s.tint, 0, 1, d.tint),
+    goldTone: pick(s.goldTone, GOLD_TONES, d.goldTone),
+    patina: clamp(s.patina, 0, 1, d.patina),
+    anodTexture: pick(s.anodTexture, ANODIZED_TEXTURES, d.anodTexture),
+    innerGlow: clamp(s.innerGlow, 0, 1, d.innerGlow),
+    stitching: !!s.stitching,
+    fuzz: clamp(s.fuzz, 0, 1, d.fuzz),
     glow: !!s.glow,
     glowColor: hex(s.glowColor, d.glowColor),
     glowSize: clamp(s.glowSize, 0, 30, d.glowSize),

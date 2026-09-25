@@ -1119,11 +1119,13 @@ function section(title, controls, { advanced = [] } = {}) {
     el.append(det);
     all = [...controls, ...advanced];
   }
+  const det = el.querySelector('details.advanced');
   return {
     el,
     update() {
       setTitle();
       for (const c of all) c.update();
+      if (det) det.hidden = advanced.every((c) => c.el.hidden);
     },
   };
 }
@@ -1283,6 +1285,7 @@ function buildInspector(root) {
   const amount = (label, ...ids) => showWhen(isMat(...ids), slider(label, { min: 0, max: 1, step: 0.01, ...styleCtl('texAmount') }));
   // Neon is self-lit, so depth, edge and shading controls do nothing for it.
   const lit = (ctrl) => showWhen(() => !onlyMat('neon')(), ctrl);
+  const mirror = (studio) => () => selectedShapes().some((s) => ['chrome', 'gold', 'copper'].includes(s.style.material) && s.style.studio === studio);
   const finish = (label, ...ids) => showWhen(isMat(...ids), select(label, { options: M.FINISHES, ...styleCtl('finish') }));
 
   const lookSec = section('Look', [
@@ -1301,7 +1304,20 @@ function buildInspector(root) {
           s.style.seed = seeds.get(s.id);
         }));
       })),
-    showWhen(isMat('glass'), slider('Frost', { min: 0, max: 1, step: 0.01, ...styleCtl('frost') })),
+    showWhen(isMat('glass', 'jelly'), slider('Frost', { min: 0, max: 1, step: 0.01, ...styleCtl('frost') })),
+    amount('Translucency', 'jelly'),
+    showWhen(isMat('jelly'), slider('Inner glow', { min: 0, max: 1, step: 0.01, ...styleCtl('innerGlow') })),
+    showWhen(isMat('gold'), select('Gold', { options: M.GOLD_TONES, ...styleCtl('goldTone') })),
+    showWhen(isMat('chrome', 'gold', 'copper'), select('Finish', { options: M.METAL_FINISHES, ...styleCtl('metalFinish') })),
+    showWhen(isMat('chrome', 'gold', 'copper'), select('Studio', { options: M.STUDIOS, ...styleCtl('studio') })),
+    showWhen(isMat('copper'), slider('Patina', { min: 0, max: 1, step: 0.01, ...styleCtl('patina') })),
+    showWhen(isMat('chrome'), slider('Tint', { min: 0, max: 1, step: 0.01, ...styleCtl('tint') })),
+    showWhen(isMat('anodized'), select('Texture', { options: M.ANODIZED_TEXTURES, ...styleCtl('anodTexture') })),
+    amount('Fade', 'denim'),
+    showWhen(isMat('denim'), checkbox('Stitching', styleCtl('stitching'))),
+    showWhen(() => selectedShapes().some((s) => s.style.material === 'denim' && s.style.stitching), color('Thread color', styleCtl('accent'))),
+    amount('Thread contrast', 'canvas'),
+    showWhen(isMat('felt'), slider('Fuzz', { min: 0, max: 1, step: 0.01, ...styleCtl('fuzz') })),
     showWhen(isMat('wood'), select('Figure', { options: M.WOOD_FIGURES, ...styleCtl('woodFigure') })),
     showWhen(isMat('marble'), select('Veins', { options: M.TONES, ...styleCtl('texTone') })),
     showWhen(isMat('terrazzo'), color('Chip color', styleCtl('accent'))),
@@ -1310,7 +1326,7 @@ function buildInspector(root) {
     finish('Glaze', 'ceramic'),
     angle('Grain direction', 'wood'),
     angle('Layer direction', 'slate'),
-    angle('Weave direction', 'carbon'),
+    angle('Weave direction', 'carbon', 'denim', 'canvas'),
     showWhen(isMat('paper'), select('Paper', { options: M.PAPER_TYPES, ...styleCtl('paperType') })),
     showWhen(isMat('paper'), slider('Crumpled', { min: 0, max: 1, step: 0.01, ...styleCtl('crumple') })),
     showWhen(isMat('paper', 'cardboard'), select('Folds', { options: M.FOLDS, ...styleCtl('folds') })),
@@ -1336,7 +1352,7 @@ function buildInspector(root) {
     amount('Exposed flutes', 'cardboard'),
     amount('Pores', 'cork'),
     showWhen(isMat('neon'), slider('Glow size', { min: 0, max: 30, step: 0.5, ...styleCtl('glowSize') })),
-    select('Surface', { options: M.SURFACES, ...styleCtl('surface'), disabled: onlyMat('glass', 'neon') }),
+    select('Surface', { options: M.SURFACES, ...styleCtl('surface'), disabled: onlyMat('glass', 'jelly', 'neon') }),
     lit(slider('Elevation', { min: 0, max: 3, step: 0.05, ...styleCtl('elevation') })),
     lit(slider('Thickness', { min: 0, max: 2, step: 0.05, ...styleCtl('thickness') })),
     lit(checkbox('Rounded edge (fillet)', styleCtl('fillet'))),
@@ -1349,7 +1365,7 @@ function buildInspector(root) {
       lit(slider('Edge shine', { min: 0, max: 1, step: 0.05, ...styleCtl('edgeShine') })),
       lit(slider('Shade', { min: 0, max: 2, step: 0.01, ...styleCtl('shade') })),
       lit(slider('Curve depth', { min: 0, max: 4, step: 0.05, ...styleCtl('curveScale') })),
-      showWhen(() => !onlyMat('neon', 'enamel', 'ceramic')(), slider('Texture strength', { min: 0, max: 3, step: 0.05, ...styleCtl('grain') })),
+      showWhen(() => !onlyMat('neon', 'enamel', 'ceramic', 'jelly')(), slider('Texture strength', { min: 0, max: 3, step: 0.05, ...styleCtl('grain') })),
       scale('Grain scale', 'wood'),
       scale('Vein scale', 'marble'),
       scale('Speckle size', 'granite'),
@@ -1357,10 +1373,16 @@ function buildInspector(root) {
       scale('Texture scale', 'concrete'),
       scale('Fiber scale', 'paper'),
       scale('Layer scale', 'slate'),
-      scale('Weave scale', 'carbon'),
+      scale('Weave scale', 'carbon', 'denim', 'canvas'),
       scale('Band width', 'holographic'),
       scale('Flute spacing', 'cardboard'),
       scale('Granule size', 'cork'),
+      scale('Fiber scale', 'felt'),
+      amount('Environment contrast', 'chrome', 'gold', 'copper'),
+      showWhen(mirror('horizon'), slider('Horizon', { min: 0, max: 1, step: 0.01, ...styleCtl('horizon') })),
+      showWhen(mirror('horizon'), slider('Horizon sharpness', { min: 0, max: 1, step: 0.01, ...styleCtl('horizonSharp') })),
+      showWhen(mirror('softbox'), slider('Light position', { min: 0, max: 1, step: 0.01, ...styleCtl('horizon') })),
+      showWhen(mirror('softbox'), slider('Light sharpness', { min: 0, max: 1, step: 0.01, ...styleCtl('horizonSharp') })),
       amount('Roughness', 'slate'),
       amount('Highlight sharpness', 'enamel'),
       lit(checkbox('Glow', styleCtl('glow'))),
