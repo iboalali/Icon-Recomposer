@@ -29,6 +29,16 @@ export const MATERIALS = [
   { id: 'wood', label: 'Wood' },
 ];
 
+export const WOOD_FIGURES = [
+  { id: 'plank', label: 'Plank' },
+  { id: 'rings', label: 'End grain (rings)' },
+];
+
+export const WOOD_FINISHES = [
+  { id: 'matte', label: 'Matte' },
+  { id: 'varnish', label: 'Varnished' },
+];
+
 export const LAYERS = [
   { id: 'foreground', label: 'Foreground' },
   { id: 'background', label: 'Background' },
@@ -80,6 +90,8 @@ export function defaultStyle() {
     frost: 0.3,
     curveScale: 1,
     grain: 1,
+    woodFigure: 'plank',
+    woodFinish: 'matte',
     woodAngle: 0,
     woodScale: 1,
     glow: false,
@@ -189,6 +201,8 @@ function normalizeStyle(s = {}) {
     frost: clamp(s.frost, 0, 1, d.frost),
     curveScale: clamp(s.curveScale, 0, 4, d.curveScale),
     grain: clamp(s.grain, 0, 3, d.grain),
+    woodFigure: pick(s.woodFigure, WOOD_FIGURES, d.woodFigure),
+    woodFinish: pick(s.woodFinish, WOOD_FINISHES, d.woodFinish),
     woodAngle: clamp(s.woodAngle, -90, 90, d.woodAngle),
     woodScale: clamp(s.woodScale, 0.25, 4, d.woodScale),
     glow: !!s.glow,

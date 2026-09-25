@@ -35,6 +35,31 @@ const WOOD_TILE = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="2
 <rect width="100%" height="100%" filter="url(#w)"/>
 </svg>`;
 
+// End grain as one alpha mask, 1024px square: growth rings of uneven spacing and
+// width around a pith slightly off center, wobbled by noise and speckled with
+// pores. Rings reach past the corners, so the square is covered everywhere.
+const WOOD_RINGS = (() => {
+  let seed = 11;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  let rings = '';
+  for (let r = 3; r < 740; r += 7 + rnd() * 7) {
+    rings += `<circle r="${r.toFixed(1)}" stroke-width="${(1.5 + rnd() * 3).toFixed(2)}" stroke-opacity="${(0.45 + rnd() * 0.45).toFixed(2)}"/>`;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">
+<filter id="r" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024" color-interpolation-filters="sRGB">
+<feTurbulence type="fractalNoise" baseFrequency="0.006" numOctaves="3" seed="5"/>
+<feDisplacementMap in="SourceGraphic" scale="36" xChannelSelector="R" yChannelSelector="G"/>
+<feGaussianBlur stdDeviation="0.6" result="rings"/>
+<feTurbulence type="fractalNoise" baseFrequency="0.5" numOctaves="1" seed="9"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3 0 0 0 -1.7" result="pores"/>
+<feComposite in="rings" in2="pores" operator="arithmetic" k2="1" k3="0.2"/>
+</filter>
+<g filter="url(#r)"><g transform="translate(500 488)" fill="none" stroke="#000">${rings}</g></g>
+</svg>`;
+})();
+
+const maskUrl = (svg) => `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+
 const BASE_CSS = `
 .ir-stage { position: relative; width: ${CANVAS}px; height: ${CANVAS}px; overflow: hidden; }
 .ir-shape, .ir-halo { position: absolute; box-sizing: border-box; }
@@ -72,9 +97,22 @@ const BASE_CSS = `
   left: 50%;
   top: 50%;
   background: color-mix(in oklab, var(--amb-albedo), black 30%);
-  mask-image: url("data:image/svg+xml,${encodeURIComponent(WOOD_TILE)}");
+  mask-image: ${maskUrl(WOOD_TILE)};
   mask-size: calc(var(--ir-wood-scale) * 128px);
   mask-position: center;
+}
+.ir-grain > .ir-rings {
+  mask-image: ${maskUrl(WOOD_RINGS)};
+  mask-size: calc(var(--ir-wood-scale) * 512px);
+  mask-repeat: no-repeat;
+}
+/* Varnish is ambient.css's shiny sheen on its own layer above the grain, so
+   the reflection is not darkened by the figure under it. */
+.ir-varnish {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
 }
 .ir-edge {
   position: absolute;
@@ -155,11 +193,15 @@ function geometryCss(shape) {
 }
 
 // The figure is a square covering the shape at any angle, turned to the grain
-// direction and clipped back to the shape by .ir-grain.
+// direction (for rings, the side the off-center pith lies on) and clipped back
+// to the shape by .ir-grain.
 function woodMarkup(shape) {
   if (shape.style.material !== 'wood') return '';
+  const st = shape.style;
   const d = Math.ceil(Math.hypot(shape.w, shape.h)) + 2;
-  return `<div class="ir-grain"><div style="width:${d}px;height:${d}px;margin:${-d / 2}px 0 0 ${-d / 2}px;transform:rotate(${num(shape.style.woodAngle)}deg)"></div></div>`;
+  const figure = st.woodFigure === 'rings' ? ' class="ir-rings"' : '';
+  const varnish = st.woodFinish === 'varnish' ? '<div class="ir-varnish amb-mat-shiny"></div>' : '';
+  return `<div class="ir-grain"><div${figure} style="width:${d}px;height:${d}px;margin:${-d / 2}px 0 0 ${-d / 2}px;transform:rotate(${num(st.woodAngle)}deg)"></div></div>${varnish}`;
 }
 
 // extra: CSS appended to the element and its glow, e.g. a crossing clip-path.
