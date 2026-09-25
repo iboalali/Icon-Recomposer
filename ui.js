@@ -737,6 +737,9 @@ function duplicateShape() {
   const ids = selectedShapes().map((s) => s.id);
   if (!ids.length) return;
   const copies = new Map(ids.map((id) => [id, M.newId('s')]));
+  // A copy gets its own pattern, so two copies of a wooden plank don't look
+  // identical; the same shape keeps one seed across variants.
+  const seeds = new Map(ids.map((id) => [id, M.newSeed()]));
   edit(() => {
     for (const v of targets()) {
       for (const id of ids) {
@@ -745,6 +748,7 @@ function duplicateShape() {
         const copy = structuredClone(v.shapes[i]);
         copy.id = copies.get(id);
         copy.name = `${copy.name} copy`;
+        copy.style.seed = seeds.get(id);
         copy.x += 4;
         copy.y += 4;
         v.shapes.splice(i + 1, 0, copy);
@@ -1288,6 +1292,15 @@ function buildInspector(root) {
       ...styleCtl('material'),
       set: shapeSet((s, v) => { Object.assign(s.style, { material: v }, M.materialDefaults(v)); }),
     }),
+    showWhen(() => selectedShapes().some((s) => M.shuffles(s.style)),
+      actionButton('Shuffle pattern', () => {
+        const seeds = new Map();
+        edit(() => forSelected((s) => {
+          if (!M.shuffles(s.style)) return;
+          if (!seeds.has(s.id)) seeds.set(s.id, M.newSeed());
+          s.style.seed = seeds.get(s.id);
+        }));
+      })),
     showWhen(isMat('glass'), slider('Frost', { min: 0, max: 1, step: 0.01, ...styleCtl('frost') })),
     showWhen(isMat('wood'), select('Figure', { options: M.WOOD_FIGURES, ...styleCtl('woodFigure') })),
     showWhen(isMat('marble'), select('Veins', { options: M.TONES, ...styleCtl('texTone') })),
@@ -1298,13 +1311,29 @@ function buildInspector(root) {
     angle('Grain direction', 'wood'),
     angle('Layer direction', 'slate'),
     angle('Weave direction', 'carbon'),
-    angle('Stripe direction', 'cardboard'),
+    showWhen(isMat('paper'), select('Paper', { options: M.PAPER_TYPES, ...styleCtl('paperType') })),
+    showWhen(isMat('paper'), slider('Crumpled', { min: 0, max: 1, step: 0.01, ...styleCtl('crumple') })),
+    showWhen(isMat('paper', 'cardboard'), select('Folds', { options: M.FOLDS, ...styleCtl('folds') })),
+    angle('Direction', 'paper', 'cardboard'),
     amount('Chips', 'terrazzo'),
     amount('Pits', 'concrete'),
     amount('Speckles', 'ceramic'),
+    showWhen(isMat('ceramic'), slider('Crackle', { min: 0, max: 1, step: 0.01, ...styleCtl('crackle') })),
+    showWhen(isMat('ceramic'), slider('Reactive glaze', { min: 0, max: 1, step: 0.01, ...styleCtl('mottle') })),
+    showWhen(isMat('enamel'), select('Metal rim', { options: M.RIMS, ...styleCtl('rim') })),
+    showWhen(() => selectedShapes().some((s) => s.style.material === 'enamel' && s.style.rim === 'custom'), color('Rim color', styleCtl('accent'))),
+    showWhen(isMat('holographic'), select('Colors', { options: M.HOLO_PALETTES, ...styleCtl('holoPalette') })),
+    showWhen(() => selectedShapes().some((s) => s.style.material === 'holographic' && s.style.holoPalette === 'custom'), color('Color 1', styleCtl('accent'))),
+    showWhen(() => selectedShapes().some((s) => s.style.material === 'holographic' && s.style.holoPalette === 'custom'), color('Color 2', styleCtl('accent2'))),
+    showWhen(isMat('holographic'), select('Pattern', { options: M.HOLO_PATTERNS, ...styleCtl('holoPattern') })),
+    showWhen(isMat('holographic'), select('Base', { options: M.HOLO_BASES, ...styleCtl('holoBase') })),
+    showWhen(isMat('holographic'), select('Direction', { options: M.HOLO_DIRECTIONS, ...styleCtl('holoFollow') })),
+    showWhen(() => selectedShapes().some((s) => s.style.material === 'holographic' && s.style.holoFollow === 'fixed'), slider('Angle', { min: -90, max: 90, step: 1, ...styleCtl('texAngle') })),
+    showWhen(isMat('holographic'), slider('Light response', { min: 0, max: 1, step: 0.01, ...styleCtl('holoShift') })),
+    showWhen(isMat('holographic'), slider('Band sharpness', { min: 0, max: 1, step: 0.01, ...styleCtl('holoSharp') })),
     amount('Diffraction lines', 'holographic'),
     amount('Core brightness', 'neon'),
-    amount('Corrugation', 'cardboard'),
+    amount('Exposed flutes', 'cardboard'),
     amount('Pores', 'cork'),
     showWhen(isMat('neon'), slider('Glow size', { min: 0, max: 30, step: 0.5, ...styleCtl('glowSize') })),
     select('Surface', { options: M.SURFACES, ...styleCtl('surface'), disabled: onlyMat('glass', 'neon') }),
@@ -1325,11 +1354,12 @@ function buildInspector(root) {
       scale('Vein scale', 'marble'),
       scale('Speckle size', 'granite'),
       scale('Chip size', 'terrazzo'),
-      scale('Texture scale', 'concrete', 'paper'),
+      scale('Texture scale', 'concrete'),
+      scale('Fiber scale', 'paper'),
       scale('Layer scale', 'slate'),
       scale('Weave scale', 'carbon'),
       scale('Band width', 'holographic'),
-      scale('Stripe spacing', 'cardboard'),
+      scale('Flute spacing', 'cardboard'),
       scale('Granule size', 'cork'),
       amount('Roughness', 'slate'),
       amount('Highlight sharpness', 'enamel'),

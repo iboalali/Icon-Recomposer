@@ -7,7 +7,7 @@
 // The markup is XHTML-safe: it is parsed as XML inside the capture SVG.
 
 import { CANVAS, paintOrder } from './model.js';
-import { TEXTURE_CSS, isTextured, neonFace, textureMarkup } from './textures.js';
+import { TEXTURE_CSS, coversEdge, isTextured, metalVars, neonFace, textureMarkup } from './textures.js';
 
 const AMBIENT_URL = new URL('./vendor/ambientcss/ambient.css', import.meta.url);
 
@@ -67,6 +67,35 @@ const BASE_CSS = `
 }
 `;
 
+// Per-shape hooks into the metal grain, so Shuffle can move it: an offset for
+// the brushed and blasted tiles, and for radial brushed a spin center, a turn
+// of the streaks and the size of the bright spot. Each defaults to the
+// original value, so a shape without them renders exactly as ambient.css does.
+const SPIN_AT = 'calc(50% + var(--ir-spin-dx, 0px)) calc(50% + var(--ir-spin-dy, 0px))';
+const AMBIENT_HOOKS = [
+  ['background-position: var(--_grain-x) var(--_grain-y);',
+    'background-position: calc(var(--_grain-x) + var(--ir-grain-dx, 0px)) calc(var(--_grain-y) + var(--ir-grain-dy, 0px));'],
+  ['background-position: calc(var(--_grain-x) * -1) calc(var(--_grain-y) * -1);',
+    'background-position: calc(var(--_grain-x) * -1 + var(--ir-grain-dx, 0px)) calc(var(--_grain-y) * -1 + var(--ir-grain-dy, 0px));'],
+  ['from 0deg at 50% 50%', 'from var(--ir-spin-turn, 0deg) at 50% 50%'],
+  ['circle closest-side at 50% 50%', `circle closest-side at ${SPIN_AT}`],
+  ['/ 0) 40%', '/ 0) var(--ir-spin-spot, 40%)'],
+  ['from var(--_sheen-angle) at 50% 50%', `from var(--_sheen-angle) at ${SPIN_AT}`],
+  ['background-position: calc(50% + var(--_grain-x)) calc(50% + var(--_grain-y));',
+    'background-position: calc(50% + var(--ir-spin-dx, 0px) + var(--_grain-x)) calc(50% + var(--ir-spin-dy, 0px) + var(--_grain-y));'],
+  ['background-position: calc(50% - var(--_grain-x)) calc(50% - var(--_grain-y));',
+    'background-position: calc(50% + var(--ir-spin-dx, 0px) - var(--_grain-x)) calc(50% + var(--ir-spin-dy, 0px) - var(--_grain-y));'],
+];
+
+function adaptAmbient(css) {
+  let out = css.replace(/:root\s*\{/, ':root, .ir-stage {');
+  for (const [from, to] of AMBIENT_HOOKS) {
+    if (!out.includes(from)) console.warn(`ambient.css changed: "${from}" not found`);
+    out = out.split(from).join(to);
+  }
+  return out;
+}
+
 let cssPromise = null;
 
 // ambient.css puts its scene defaults and derived colors on :root. Inside a
@@ -78,7 +107,7 @@ export function iconCss() {
         if (!r.ok) throw new Error(`Could not load ambient.css (${r.status})`);
         return r.text();
       })
-      .then((css) => css.replace(/:root\s*\{/, ':root, .ir-stage {') + BASE_CSS + TEXTURE_CSS);
+      .then((css) => adaptAmbient(css) + BASE_CSS + TEXTURE_CSS);
   }
   return cssPromise;
 }
@@ -147,7 +176,7 @@ function shapeMarkup(shape, scene, extra = '') {
     `--ir-frost:${num(st.frost)}`,
     `--amb-curve-scale:${num(st.curveScale)}`,
     `--amb-grain-amount:${num(st.grain)}`,
-  ].join(';');
+  ].join(';') + metalVars(shape);
   const geo = geometryCss(shape) + extra;
   const opacity = st.opacity < 1 ? `opacity:${num(st.opacity)};` : '';
   let out = '';
@@ -162,7 +191,9 @@ function shapeMarkup(shape, scene, extra = '') {
     return out;
   }
   const edge = st.chamfer || st.fillet ? '<div class="ir-edge"></div>' : '';
-  out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars}">${textureMarkup(shape, light)}${edge}</div>`;
+  const tex = textureMarkup(shape, light);
+  const inner = coversEdge(st) ? edge + tex : tex + edge;
+  out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars}">${inner}</div>`;
   return out;
 }
 

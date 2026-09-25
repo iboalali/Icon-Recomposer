@@ -54,6 +54,52 @@ export const FINISHES = [
   { id: 'gloss', label: 'Glossy' },
 ];
 
+export const RIMS = [
+  { id: 'none', label: 'None' },
+  { id: 'gold', label: 'Gold' },
+  { id: 'silver', label: 'Silver' },
+  { id: 'black', label: 'Black nickel' },
+  { id: 'custom', label: 'Custom color' },
+];
+
+export const PAPER_TYPES = [
+  { id: 'plain', label: 'Plain' },
+  { id: 'kraft', label: 'Kraft' },
+  { id: 'laid', label: 'Laid' },
+];
+
+export const FOLDS = [
+  { id: 'none', label: 'None' },
+  { id: 'one', label: 'One fold' },
+  { id: 'two', label: 'Two folds' },
+];
+
+export const HOLO_PALETTES = [
+  { id: 'rainbow', label: 'Rainbow' },
+  { id: 'pastel', label: 'Pastel' },
+  { id: 'oilslick', label: 'Oil slick' },
+  { id: 'gold', label: 'Gold foil' },
+  { id: 'silver', label: 'Silver foil' },
+  { id: 'custom', label: 'Custom colors' },
+];
+
+export const HOLO_PATTERNS = [
+  { id: 'bands', label: 'Bands' },
+  { id: 'swirl', label: 'Swirl' },
+  { id: 'glitter', label: 'Glitter' },
+  { id: 'prism', label: 'Prism' },
+];
+
+export const HOLO_BASES = [
+  { id: 'color', label: 'Shape color' },
+  { id: 'silver', label: 'Silver' },
+];
+
+export const HOLO_DIRECTIONS = [
+  { id: 'light', label: 'Follow the light' },
+  { id: 'fixed', label: 'Fixed angle' },
+];
+
 export const TONES = [
   { id: 'dark', label: 'Darker than the stone' },
   { id: 'light', label: 'Lighter than the stone' },
@@ -69,16 +115,22 @@ const MATERIAL_DEFAULTS = {
   concrete: { texAmount: 0.4 },
   slate: { texAmount: 0.5 },
   carbon: { finish: 'gloss' },
-  ceramic: { finish: 'gloss', texAmount: 0 },
-  enamel: { texAmount: 0.5 },
-  holographic: { texAmount: 0.3 },
+  ceramic: { finish: 'gloss', texAmount: 0, mottle: 0.25 },
+  enamel: { texAmount: 0.5, rim: 'gold' },
+  holographic: { texAmount: 0.2 },
   neon: { texAmount: 0.6 },
-  cardboard: { texAmount: 0.6 },
+  cardboard: { texAmount: 0, paperType: 'kraft' },
   cork: { texAmount: 0.4 },
 };
 
+// Materials whose pattern Shuffle can change. Seed 0 is each pattern's
+// original layout.
+const SHUFFLED = new Set(['brushed', 'brushed-round', 'blasted', 'wood', 'marble', 'granite', 'terrazzo', 'slate', 'concrete', 'cork', 'paper', 'cardboard', 'ceramic', 'holographic']);
+export const shuffles = (st) => SHUFFLED.has(st.material) && (st.material !== 'holographic' || st.holoPattern === 'glitter');
+export const newSeed = () => 1 + Math.floor(Math.random() * 999999);
+
 export function materialDefaults(material) {
-  return { texAngle: 0, texScale: 1, texAmount: 0.5, finish: 'matte', grain: 1, ...MATERIAL_DEFAULTS[material] };
+  return { texAngle: 0, texScale: 1, texAmount: 0.5, finish: 'matte', grain: 1, crackle: 0, mottle: 0, rim: 'none', paperType: 'plain', crumple: 0, folds: 'none', holoPalette: 'rainbow', holoPattern: 'bands', holoBase: 'color', holoFollow: 'light', holoShift: 0.5, holoSharp: 0, ...MATERIAL_DEFAULTS[material] };
 }
 
 export const LAYERS = [
@@ -139,6 +191,20 @@ export function defaultStyle() {
     texScale: 1,
     texAmount: 0.5,
     accent: '#e9e3d6',
+    seed: 0,
+    crackle: 0,
+    mottle: 0,
+    rim: 'none',
+    paperType: 'plain',
+    crumple: 0,
+    folds: 'none',
+    holoPalette: 'rainbow',
+    holoPattern: 'bands',
+    holoBase: 'color',
+    holoFollow: 'light',
+    holoShift: 0.5,
+    holoSharp: 0,
+    accent2: '#ff6fd8',
     glow: false,
     glowColor: '#7fd6ff',
     glowSize: 6,
@@ -253,6 +319,20 @@ function normalizeStyle(s = {}) {
     texScale: clamp(s.texScale ?? s.woodScale, 0.25, 4, d.texScale),
     texAmount: clamp(s.texAmount, 0, 1, d.texAmount),
     accent: hex(s.accent, d.accent),
+    seed: Math.round(clamp(s.seed, 0, 999999, d.seed)),
+    crackle: clamp(s.crackle, 0, 1, d.crackle),
+    mottle: clamp(s.mottle, 0, 1, d.mottle),
+    rim: pick(s.rim, RIMS, d.rim),
+    paperType: pick(s.paperType, PAPER_TYPES, d.paperType),
+    crumple: clamp(s.crumple, 0, 1, d.crumple),
+    folds: pick(s.folds, FOLDS, d.folds),
+    holoPalette: pick(s.holoPalette, HOLO_PALETTES, d.holoPalette),
+    holoPattern: pick(s.holoPattern, HOLO_PATTERNS, d.holoPattern),
+    holoBase: pick(s.holoBase, HOLO_BASES, d.holoBase),
+    holoFollow: pick(s.holoFollow, HOLO_DIRECTIONS, d.holoFollow),
+    holoShift: clamp(s.holoShift, 0, 1, d.holoShift),
+    holoSharp: clamp(s.holoSharp, 0, 1, d.holoSharp),
+    accent2: hex(s.accent2, d.accent2),
     glow: !!s.glow,
     glowColor: hex(s.glowColor, d.glowColor),
     glowSize: clamp(s.glowSize, 0, 30, d.glowSize),
@@ -433,7 +513,7 @@ export function shapesOverlap(a, b) {
 export const COPY_SHAPE_PARTS = [
   { id: 'geometry', label: 'Geometry (position, size, corners, rotation, kind)' },
   { id: 'look', label: 'Look (material, surface, depth, edges, opacity, glow)' },
-  { id: 'color', label: 'Colors (shape, glow and accent color)' },
+  { id: 'color', label: 'Colors (shape, glow and accent colors)' },
   { id: 'layer', label: 'Layer and visibility' },
 ];
 export const COPY_VARIANT_PARTS = [
@@ -445,7 +525,7 @@ export const COPY_VARIANT_PARTS = [
 ];
 
 const GEOMETRY_KEYS = ['kind', 'x', 'y', 'w', 'h', 'radius', 'rotation'];
-const COLOR_KEYS = ['color', 'glowColor', 'accent'];
+const COLOR_KEYS = ['color', 'glowColor', 'accent', 'accent2'];
 
 // Copies the chosen parts of the shapes `ids` (and the chosen variant-wide
 // parts) from `src` into `dst`. Shapes are matched by id.
