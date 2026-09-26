@@ -1222,6 +1222,19 @@ export const isTextured = (material) => material in TEXTURES;
 export const coversEdge = (st) => st.material === 'enamel' && st.rim !== 'none';
 export const hasFinish = (material) => FINISHED.has(material);
 
+const FINISH_GLOSS = { matte: 0, satin: 0.5, gloss: 1 };
+const METAL_GLOSS = { polished: 1, satin: 0.5, brushed: 0 };
+
+// How much of its surroundings a shape mirrors: 1 for a glossy look, 0.5 for
+// satin, 0 when it cannot show reflections.
+export function reflectivity(st) {
+  const m = st.material;
+  if (m === 'shiny' || m === 'enamel' || m === 'jelly') return 1;
+  if (METALS.has(m)) return METAL_GLOSS[st.metalFinish] ?? 0;
+  if (FINISHED.has(m) || m === 'ceramic' || m === 'hammered' || m === 'leather') return FINISH_GLOSS[st.finish] ?? 0;
+  return 0;
+}
+
 export const TEXTURE_CSS = `
 .ir-shape.ir-textured { isolation: isolate; }
 .ir-tex {

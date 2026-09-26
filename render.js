@@ -6,8 +6,8 @@
 //
 // The markup is XHTML-safe: it is parsed as XML inside the capture SVG.
 
-import { CANVAS, paintOrder } from './model.js';
-import { TEXTURE_CSS, ambientMaterial, coversEdge, isTextured, metalSurface, metalVars, neonFace, textureMarkup, underlayMarkup } from './textures.js';
+import { CANVAS, isOver, paintOrder, shapesOverlap } from './model.js';
+import { TEXTURE_CSS, ambientMaterial, coversEdge, isTextured, metalSurface, metalVars, neonFace, reflectivity, textureMarkup, underlayMarkup } from './textures.js';
 
 const AMBIENT_URL = new URL('./vendor/ambientcss/ambient.css', import.meta.url);
 
@@ -21,8 +21,8 @@ const SURFACE_CLASS = {
 
 const BASE_CSS = `
 .ir-stage { position: relative; width: ${CANVAS}px; height: ${CANVAS}px; overflow: hidden; }
-.ir-shape, .ir-halo { position: absolute; box-sizing: border-box; }
-.ir-halo { background: transparent; pointer-events: none; }
+.ir-shape, .ir-halo, .ir-refl { position: absolute; box-sizing: border-box; }
+.ir-halo, .ir-refl { background: transparent; pointer-events: none; }
 /* Frost scales ambient.css's glass pane: 0 is clear glass, 0.3 is ambient.css's
    own fit, 1 is a near-opaque milky pane. The pane keeps the tone it has at the
    fit, so more frost turns it milkier, not darker. */
@@ -147,7 +147,8 @@ function geometryCss(shape) {
 }
 
 // extra: CSS appended to the element and its glow, e.g. a crossing clip-path.
-function shapeMarkup(shape, scene, extra = '') {
+// plain: without texture layers.
+function shapeMarkup(shape, scene, extra = '', plain = false) {
   const st = shape.style;
   const classes = ['ir-shape', 'ambient'];
   const neon = st.material === 'neon';
@@ -185,13 +186,13 @@ function shapeMarkup(shape, scene, extra = '') {
   } else if (st.glow && st.glowSize > 0) {
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
-  out += underlayMarkup(shape, scene, geo);
+  if (!plain) out += underlayMarkup(shape, scene, geo);
   if (neon) {
     out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars};box-shadow:none">${neonFace(shape)}</div>`;
     return out;
   }
   const edge = st.chamfer || st.fillet ? '<div class="ir-edge"></div>' : '';
-  const tex = textureMarkup(shape, light, scene);
+  const tex = plain ? '' : textureMarkup(shape, light, scene);
   const inner = coversEdge(st) ? edge + tex : tex + edge;
   out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars}">${inner}</div>`;
   return out;
@@ -341,6 +342,51 @@ function crossingClip(shape, holes, overlap) {
   return `clip-path:path(evenodd,'${d}');`;
 }
 
+// Reflections of `sources` inside `glossy`, as one layer in glossy's frame:
+// blurred, then clipped to glossy's outline and faded out before its rim.
+// A reflection sits along the line of sight, so by default it drops straight
+// down (the icon is seen slightly from the front). The drop grows with the
+// reflected shape's elevation and follows the glossy shape's reflection
+// direction, or the scene light when locked to it. The copies skip their
+// texture layers, which a blurred reflection can't show, and have no
+// elevation, so they cast no shadow.
+// Blend stays normal: Chrome's live preview draws a rotated element with another
+// mix-blend-mode outside its clip-path.
+// holes: shapes glossy is put over by a crossing, which paint over its
+// reflections there. within: the shape a crossing copy of glossy is clipped to.
+function reflectionMarkup(glossy, sources, scene, overlap, { holes = [], within = null } = {}) {
+  const st = glossy.style;
+  const r = reflectivity(st);
+  const [dx, dy] = st.reflectLock ? [scene.lightX, scene.lightY] : [st.reflectX, st.reflectY];
+  const copies = sources.map((src) => {
+    const drop = REFLECT_DROP * src.style.elevation;
+    const [[cx, cy]] = toBox(glossy, [[src.x + src.w / 2 + dx * drop, src.y + src.h / 2 + dy * drop]]);
+    const c = structuredClone(src);
+    c.x = cx - src.w / 2;
+    c.y = cy - src.h / 2;
+    c.rotation = (src.rotation || 0) - (glossy.rotation || 0) + 180;
+    Object.assign(c.style, { elevation: 0, glow: false, glowSize: 0 });
+    return shapeMarkup(c, scene, '', true);
+  }).join('');
+  const inner = insetPolygon(outline(glossy), overlap);
+  let d = ring(toBox(glossy, within ? clipPolygon(inner, outline(within)) : inner));
+  for (const u of holes) {
+    const shared = clipPolygon(outline(glossy), outline(u));
+    if (shared.length > 2) d += ring(toBox(glossy, insetPolygon(shared, overlap)));
+  }
+  const f = num(Math.min(REFLECT_FADE, glossy.w / 4, glossy.h / 4));
+  const fade = glossy.kind === 'ellipse'
+    ? `radial-gradient(closest-side,#000 calc(100% - ${f}px),transparent)`
+    : `linear-gradient(to right,transparent,#000 ${f}px,#000 calc(100% - ${f}px),transparent),linear-gradient(transparent,#000 ${f}px,#000 calc(100% - ${f}px),transparent)`;
+  const blur = num((1 + 0.5 * Math.max(...sources.map((s) => s.style.elevation))) / r);
+  const alpha = num(REFLECT_ALPHA * st.reflect * r * st.opacity);
+  return `<div class="ir-refl" style="${geometryCss(glossy)}clip-path:path(evenodd,'${d}');filter:blur(${blur}px);mask-image:${fade};mask-composite:intersect;opacity:${alpha}">${copies}</div>`;
+}
+
+const REFLECT_DROP = 9;
+const REFLECT_FADE = 9;
+const REFLECT_ALPHA = 0.6;
+
 // layer: 'all' (the composite), 'foreground' (no background) or 'background'.
 // pxPerUnit: output pixels per canvas unit, which sizes the crossing seam overlap.
 export function stageMarkup(variant, { layer = 'all', transparent = false, pxPerUnit = 4 } = {}) {
@@ -362,6 +408,11 @@ export function stageMarkup(variant, { layer = 'all', transparent = false, pxPer
   const rank = new Map(ordered.map((s, i) => [s.id, i]));
   const byId = new Map(ordered.map((s) => [s.id, s]));
   const drawn = (s) => s && !s.hidden && (layer === 'all' || s.layer === layer);
+  // Shapes that show in a glossy shape: visible ones on top of it, from either
+  // layer, so the background layer carries the foreground's reflections.
+  const reflected = (g) => (g.style.reflect > 0 && reflectivity(g.style) > 0
+    ? ordered.filter((o) => o !== g && !o.hidden && shapesOverlap(o, g) && isOver(variant, o.id, g.id))
+    : []);
   const patches = new Map();
   const coveredBy = new Map();
   for (const cr of variant.crossings || []) {
@@ -380,7 +431,13 @@ export function stageMarkup(variant, { layer = 'all', transparent = false, pxPer
       const overs = (patches.get(s.id) || []).sort((a, b) => rank.get(a.id) - rank.get(b.id));
       const unders = coveredBy.get(s.id) || [];
       const clip = overs.length || unders.length ? crossingClip(s, { over: overs, under: unders }, overlap) : '';
-      return shapeMarkup(s, sc, clip) + overs.map((o) => overCopy(o, s, sc)).join('');
+      const mirror = reflected(s);
+      const refl = mirror.length ? reflectionMarkup(s, mirror, sc, overlap, { holes: unders }) : '';
+      const copies = overs.map((o) => {
+        const m = reflected(o);
+        return overCopy(o, s, sc) + (m.length ? reflectionMarkup(o, m, sc, overlap, { within: s }) : '');
+      }).join('');
+      return shapeMarkup(s, sc, clip) + refl + copies;
     })
     .join('');
   return `<div class="ir-stage" style="${style}">${shapes}</div>`;

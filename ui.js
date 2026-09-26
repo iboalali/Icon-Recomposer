@@ -10,6 +10,7 @@ import { iconSheet, stageMarkup } from './render.js';
 import {
   PRESETS, REGIONS, MASKS, parseCustomSizes, planExport, runExport, renderCanvas, download,
 } from './export.js';
+import { reflectivity } from './textures.js';
 import { confirmDialog } from './dialog.js';
 import { createColorField } from './colorpicker.js';
 import { importVectorDrawable, looksLikeVectorDrawable } from './vdimport.js';
@@ -1050,10 +1051,11 @@ function color(label, { get, set, mixed }) {
   };
 }
 
-function lightPad() {
+// A square pad that sets a direction from -1 to 1 on each axis.
+function directionPad(label, { title, get, set, disabled }) {
   const pad = document.createElement('div');
   pad.className = 'lightpad';
-  pad.title = 'Drag to move the light';
+  pad.title = title;
   const area = document.createElement('div');
   area.className = 'lightpad-area';
   const dot = document.createElement('div');
@@ -1070,20 +1072,22 @@ function lightPad() {
       x = Math.round(x);
       y = Math.round(y);
     }
-    mutate(() => forScene((sc) => { sc.lightX = round2(x); sc.lightY = round2(y); }));
+    mutate(() => set(round2(x), round2(y)));
   };
   pad.addEventListener('pointerdown', (e) => {
+    if (disabled?.()) return;
     pad.setPointerCapture(e.pointerId);
     apply(e);
   });
   pad.addEventListener('pointermove', (e) => { if (pad.hasPointerCapture(e.pointerId)) apply(e); });
-  pad.addEventListener('pointerup', commit);
+  pad.addEventListener('pointerup', (e) => { if (pad.hasPointerCapture(e.pointerId)) commit(); });
   return {
-    el: fieldRow('Direction', pad),
+    el: fieldRow(label, pad),
     update() {
-      const sc = variant().scene;
-      dot.style.left = `${((sc.lightX + 1) / 2) * 100}%`;
-      dot.style.top = `${((sc.lightY + 1) / 2) * 100}%`;
+      const [x, y] = get();
+      dot.style.left = `${((x + 1) / 2) * 100}%`;
+      dot.style.top = `${((y + 1) / 2) * 100}%`;
+      pad.classList.toggle('disabled', !!disabled?.());
     },
   };
 }
@@ -1244,7 +1248,11 @@ function buildInspector(root) {
   ]);
 
   const lightSec = section('Light', [
-    lightPad(),
+    directionPad('Direction', {
+      title: 'Drag to move the light',
+      get: () => [variant().scene.lightX, variant().scene.lightY],
+      set: (x, y) => forScene((sc) => { sc.lightX = x; sc.lightY = y; }),
+    }),
     slider('Key light', { min: 0, max: 1, step: 0.01, get: () => variant().scene.key, set: (v) => forScene((s) => { s.key = v; }) }),
     slider('Fill light', { min: 0, max: 1, step: 0.01, get: () => variant().scene.fill, set: (v) => forScene((s) => { s.fill = v; }) }),
   ], {
@@ -1287,6 +1295,8 @@ function buildInspector(root) {
   const lit = (ctrl) => showWhen(() => !onlyMat('neon')(), ctrl);
   const mirror = (studio) => () => selectedShapes().some((s) => ['chrome', 'gold', 'copper'].includes(s.style.material) && s.style.studio === studio);
   const finish = (label, ...ids) => showWhen(isMat(...ids), select(label, { options: M.FINISHES, ...styleCtl('finish') }));
+  const glossy = () => selectedShapes().some((s) => reflectivity(s.style) > 0);
+  const reflecting = () => selectedShapes().some((s) => reflectivity(s.style) > 0 && s.style.reflect > 0);
 
   const lookSec = section('Look', [
     color('Color', styleCtl('color')),
@@ -1362,6 +1372,7 @@ function buildInspector(root) {
     lit(checkbox('Rounded edge (fillet)', styleCtl('fillet'))),
     lit(checkbox('Beveled edge (chamfer)', styleCtl('chamfer'))),
     slider('Opacity', { min: 0, max: 1, step: 0.01, ...styleCtl('opacity') }),
+    showWhen(glossy, slider('Reflections', { min: 0, max: 1, step: 0.01, ...styleCtl('reflect') })),
   ], {
     advanced: [
       lit(slider('Fillet width', { min: -2, max: 2, step: 0.1, ...styleCtl('filletWidth') })),
@@ -1393,6 +1404,13 @@ function buildInspector(root) {
       showWhen(mirror('softbox'), slider('Light sharpness', { min: 0, max: 1, step: 0.01, ...styleCtl('horizonSharp') })),
       amount('Roughness', 'slate'),
       amount('Highlight sharpness', 'enamel'),
+      showWhen(reflecting, checkbox('Lock reflections to the light', styleCtl('reflectLock'))),
+      showWhen(reflecting, directionPad('Reflection direction', {
+        title: 'Drag to move the reflection',
+        get: () => (sh().style.reflectLock ? [variant().scene.lightX, variant().scene.lightY] : [sh().style.reflectX, sh().style.reflectY]),
+        set: (x, y) => forSelected((s) => { s.style.reflectX = x; s.style.reflectY = y; }),
+        disabled: () => sh().style.reflectLock,
+      })),
       lit(checkbox('Glow', styleCtl('glow'))),
       lit(color('Glow color', styleCtl('glowColor'))),
       lit(slider('Glow size', { min: 0, max: 30, step: 0.5, ...styleCtl('glowSize') })),

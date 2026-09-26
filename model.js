@@ -265,6 +265,10 @@ export function defaultStyle() {
     glow: false,
     glowColor: '#7fd6ff',
     glowSize: 6,
+    reflect: 0,
+    reflectX: 0,
+    reflectY: 1,
+    reflectLock: false,
   };
 }
 
@@ -404,6 +408,10 @@ function normalizeStyle(s = {}) {
     glow: !!s.glow,
     glowColor: hex(s.glowColor, d.glowColor),
     glowSize: clamp(s.glowSize, 0, 30, d.glowSize),
+    reflect: clamp(s.reflect, 0, 1, d.reflect),
+    reflectX: clamp(s.reflectX, -1, 1, d.reflectX),
+    reflectY: clamp(s.reflectY, -1, 1, d.reflectY),
+    reflectLock: !!s.reflectLock,
   };
 }
 

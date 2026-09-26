@@ -227,6 +227,7 @@ details.advanced[open] > .adv-body { display: flex; flex-direction: column; gap:
   cursor: crosshair;
   touch-action: none;
 }
+.lightpad.disabled { opacity: 0.45; cursor: default; }
 .lightpad-area { position: absolute; inset: 10px; }
 .lightpad-dot {
   position: absolute;
