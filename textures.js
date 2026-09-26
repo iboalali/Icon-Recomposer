@@ -165,62 +165,65 @@ function twill(horizontal) {
   });
 }
 
-// Crazing: the edges of Voronoi cells around jittered grid points, a seamless
-// tile of irregular polygons like the crack network in a glaze. Each cell is
-// the square clipped by the bisectors to its neighbors; neighbors wrap around
-// the tile, and each cell is drawn at every wrap offset so edges continue
-// across the seams. A slight displacement makes the cracks less straight.
-function crackleMask(seed) {
-  return mask(`crackle:${seed}`, () => {
-    const n = 7;
-    const size = 256;
-    const c = size / n;
-    const pts = [];
-    for (let j = 0; j < n; j++) {
-      for (let i = 0; i < n; i++) {
-        const k = j * n + i;
-        pts.push([(i + 0.15 + rand(seed + 7, k * 2) * 0.7) * c, (j + 0.15 + rand(seed + 7, k * 2 + 1) * 0.7) * c]);
+// Voronoi cells around jittered grid points in a seamless tile. Each cell is
+// the square clipped by the bisectors to its neighbors; neighbors wrap
+// around the tile, so a cell drawn at every wrap offset continues across the
+// seams.
+function voronoiCells(seed, n, size) {
+  const c = size / n;
+  const pts = [];
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const k = j * n + i;
+      pts.push([(i + 0.15 + rand(seed, k * 2) * 0.7) * c, (j + 0.15 + rand(seed, k * 2 + 1) * 0.7) * c]);
+    }
+  }
+  const clip = (poly, [px, py], [qx, qy]) => {
+    const mx = (px + qx) / 2;
+    const my = (py + qy) / 2;
+    const nx = qx - px;
+    const ny = qy - py;
+    const side = ([x, y]) => (x - mx) * nx + (y - my) * ny;
+    const out = [];
+    for (let a = 0; a < poly.length; a++) {
+      const u = poly[a];
+      const v = poly[(a + 1) % poly.length];
+      const su = side(u);
+      const sv = side(v);
+      if (su <= 0) out.push(u);
+      if ((su <= 0) !== (sv <= 0)) {
+        const t = su / (su - sv);
+        out.push([u[0] + (v[0] - u[0]) * t, u[1] + (v[1] - u[1]) * t]);
       }
     }
-    const clip = (poly, [px, py], [qx, qy]) => {
-      const mx = (px + qx) / 2;
-      const my = (py + qy) / 2;
-      const nx = qx - px;
-      const ny = qy - py;
-      const side = ([x, y]) => (x - mx) * nx + (y - my) * ny;
-      const out = [];
-      for (let a = 0; a < poly.length; a++) {
-        const u = poly[a];
-        const v = poly[(a + 1) % poly.length];
-        const su = side(u);
-        const sv = side(v);
-        if (su <= 0) out.push(u);
-        if ((su <= 0) !== (sv <= 0)) {
-          const t = su / (su - sv);
-          out.push([u[0] + (v[0] - u[0]) * t, u[1] + (v[1] - u[1]) * t]);
-        }
-      }
-      return out;
-    };
-    let d = '';
-    for (const p of pts) {
-      let poly = [[p[0] - c * 2, p[1] - c * 2], [p[0] + c * 2, p[1] - c * 2], [p[0] + c * 2, p[1] + c * 2], [p[0] - c * 2, p[1] + c * 2]];
-      for (const q of pts) {
-        for (const ox of [-size, 0, size]) {
-          for (const oy of [-size, 0, size]) {
-            const qq = [q[0] + ox, q[1] + oy];
-            if (qq[0] === p[0] && qq[1] === p[1]) continue;
-            if (Math.abs(qq[0] - p[0]) > c * 2.5 || Math.abs(qq[1] - p[1]) > c * 2.5) continue;
-            poly = clip(poly, p, qq);
-          }
-        }
-      }
+    return out;
+  };
+  return pts.map((p) => {
+    let poly = [[p[0] - c * 2, p[1] - c * 2], [p[0] + c * 2, p[1] - c * 2], [p[0] + c * 2, p[1] + c * 2], [p[0] - c * 2, p[1] + c * 2]];
+    for (const q of pts) {
       for (const ox of [-size, 0, size]) {
         for (const oy of [-size, 0, size]) {
-          d += `M${poly.map(([x, y]) => `${(x + ox).toFixed(1)} ${(y + oy).toFixed(1)}`).join('L')}Z`;
+          const qq = [q[0] + ox, q[1] + oy];
+          if (qq[0] === p[0] && qq[1] === p[1]) continue;
+          if (Math.abs(qq[0] - p[0]) > c * 2.5 || Math.abs(qq[1] - p[1]) > c * 2.5) continue;
+          poly = clip(poly, p, qq);
         }
       }
     }
+    return poly;
+  });
+}
+
+const WRAPS = [-1, 0, 1].flatMap((x) => [-1, 0, 1].map((y) => [x, y]));
+const polyPath = (poly, ox = 0, oy = 0) => `M${poly.map(([x, y]) => `${(x + ox).toFixed(1)} ${(y + oy).toFixed(1)}`).join('L')}Z`;
+
+// Crazing: the edges of Voronoi cells, a seamless tile of irregular polygons
+// like the crack network in a glaze. A slight displacement makes the cracks
+// less straight.
+function crackleMask(seed) {
+  return mask(`crackle:${seed}`, () => {
+    const size = 256;
+    const d = voronoiCells(seed + 7, 7, size).map((poly) => WRAPS.map(([x, y]) => polyPath(poly, x * size, y * size)).join('')).join('');
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">
 <filter id="c" x="0" y="0" width="100%" height="100%">${noise(size, 8, 8, 2, ns(71, seed), 'n')}<feDisplacementMap in="SourceGraphic" in2="n" scale="5" xChannelSelector="R" yChannelSelector="G"/></filter>
 <path d="${d}" fill="none" stroke="#000" stroke-width="0.9" filter="url(#c)"/>
@@ -393,6 +396,8 @@ function crumpleMasks(seed) {
 //   height.filter: primitives giving the height, from SourceGraphic;
 //   height.draw: what they filter (default: a rect over the margin);
 //   height.tile: repeat the height, made at tile size, over the margin;
+//   height.post: primitives after the repeat, such as a blur, which before
+//   it would soften the tile's edges into a seam;
 //   spec: { exp, k } for a specular highlight.
 const litCache = new Map();
 function litImage(key, make) {
@@ -428,7 +433,7 @@ function relief(key, size, height, depth, rl, spec = null) {
     const hi = num(0.5 + 0.6 * rl.key);
     const lo = num(0.5 - 0.6 * rl.key * (1 - rl.fill * 0.5));
     const light = `<feDistantLight azimuth="${rl.az}" elevation="${rl.el}"/>`;
-    let fx = h.filter + (h.tile ? '<feTile result="h"/>' : '<feComponentTransfer result="h"/>');
+    let fx = h.filter + (h.tile ? '<feTile/>' : '') + (h.post || '') + '<feComponentTransfer result="h"/>';
     fx += `<feDiffuseLighting in="h" surfaceScale="${num(depth)}" diffuseConstant="${num(0.5 / Math.sin(e))}" lighting-color="#fff">${light}</feDiffuseLighting>`;
     fx += `<feComponentTransfer result="d">${['R', 'G', 'B'].map((c) => `<feFunc${c} type="table" tableValues="${lo} 0.5 ${hi}"/>`).join('')}</feComponentTransfer>`;
     if (spec) {
@@ -527,6 +532,70 @@ const stuccoHeight = (seed) => ({
     + '<feComposite in="sand" operator="arithmetic" k2="1" k3="0.05"/>',
   tile: true,
 });
+
+// Carved stone: chisel facets. A jittered grid of points at random heights,
+// split into triangles along random diagonals, each filled with the one flat
+// plane through its corners, so facets meet in sharp ridges and valleys with
+// no gap. The grid wraps, and triangles near an edge are drawn again on the
+// opposite side. A fine tooth and, unless `pits` is false, sparse deep pits,
+// both repeated tiles, go on top.
+const alphaR = (result = '') => `<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0"${result ? ` result="${result}"` : ''}/>`;
+function carvedHeight(seed, pits = true) {
+  const n = 7;
+  const size = 128;
+  const c = size / n;
+  const r = (k) => rand(seed + 29, k);
+  const at = (i, j) => {
+    const wi = ((i % n) + n) % n;
+    const wj = ((j % n) + n) % n;
+    const k = wj * n + wi;
+    return [(i + (r(k * 3) - 0.5) * 0.6) * c, (j + (r(k * 3 + 1) - 0.5) * 0.6) * c, 0.15 + r(k * 3 + 2) * 0.7];
+  };
+  let defs = '';
+  let tris = '';
+  let id = 0;
+  // The plane h = a x + b y + d through three corners, as a gradient from
+  // where it is 0 to where it is 1, along its slope.
+  const facet = (t) => {
+    const [[x0, y0, h0], [x1, y1, h1], [x2, y2, h2]] = t;
+    const det = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+    const a = ((h1 - h0) * (y2 - y0) - (h2 - h0) * (y1 - y0)) / det;
+    const b = ((x1 - x0) * (h2 - h0) - (x2 - x0) * (h1 - h0)) / det;
+    const g2 = a * a + b * b;
+    const d = `M${t.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join('L')}Z`;
+    if (g2 < 1e-9) {
+      const v = Math.round(h0 * 255);
+      return `<path d="${d}" fill="rgb(${v} ${v} ${v})" stroke="rgb(${v} ${v} ${v})"/>`;
+    }
+    const cx = (x0 + x1 + x2) / 3;
+    const cy = (y0 + y1 + y2) / 3;
+    const hc = (h0 + h1 + h2) / 3;
+    const p = (h) => [cx + (a * (h - hc)) / g2, cy + (b * (h - hc)) / g2];
+    const [ax, ay] = p(0);
+    const [bx, by] = p(1);
+    defs += `<linearGradient id="t${id}" gradientUnits="userSpaceOnUse" x1="${num(ax)}" y1="${num(ay)}" x2="${num(bx)}" y2="${num(by)}"><stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#fff"/></linearGradient>`;
+    return `<path d="${d}" fill="url(#t${id})" stroke="url(#t${id++})"/>`;
+  };
+  for (let j = -1; j <= n; j++) {
+    for (let i = -1; i <= n; i++) {
+      const q = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
+      const wk = ((j % n) + n) % n * n + ((i % n) + n) % n;
+      const pair = r(1000 + wk) < 0.5 ? [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] : [[q[0], q[1], q[3]], [q[1], q[2], q[3]]];
+      for (const t of pair) tris += facet(t);
+    }
+  }
+  return {
+    draw: `<defs>${defs}</defs><g stroke-width="0.6" stroke-linejoin="round">${tris}</g>`,
+    filter: alphaR(pits ? 'facets' : 'pitted')
+      + (pits ? `<feTurbulence x="0" y="0" width="128" height="128" type="fractalNoise" baseFrequency="${12 / 128}" numOctaves="2" seed="${ns(112, seed)}" stitchTiles="stitch"/>`
+        + `${cut(10, 0.78)}<feTile/>`
+        + '<feComposite in="facets" operator="arithmetic" k2="1" k3="-0.4" result="pitted"/>' : '')
+      + `<feTurbulence x="0" y="0" width="128" height="128" type="fractalNoise" baseFrequency="${160 / 128}" numOctaves="1" seed="${ns(113, seed)}" stitchTiles="stitch"/>`
+      + `${alphaR()}<feTile/>`
+      + '<feComposite in="pitted" operator="arithmetic" k2="1" k3="0.05"/>',
+    post: smooth(0.35),
+  };
+}
 
 // Isotropic noise tiles, keyed by everything that shapes them.
 const tile = (name, seed, size, period, octaves, base, k, t) =>
@@ -801,6 +870,19 @@ const TEXTURES = {
     { mask: tile('su-mottle', st.seed, 256, 3, 4, 103, 1.4, 0.45), size: 120, color: darker(10), blend: 'multiply', opacity: 0.6 * Math.min(1, st.grain), turn: false },
     { image: relief(`stucco:${st.seed}`, 128, () => stuccoHeight(st.seed), (1 + 4 * st.texAmount) * st.grain, reliefLight(light, scene)), size: 64, blend: 'hard-light', turn: false },
   ],
+  // Carved stone: large facets and smaller chisel strikes over them, lit by
+  // the scene light, over a stone tone mottled darker and lighter.
+  carved: (st, light, shape, scene) => {
+    const g = Math.min(1, st.grain);
+    const depth = (1.5 + 6 * st.texAmount) * st.grain;
+    const rl = reliefLight(light, scene);
+    return [
+      { mask: tile('cs-mottle', st.seed, 256, 4, 5, 114, 1.4, 0.4), size: 120, color: darker(22), blend: 'multiply', opacity: 0.55 * g, turn: false },
+      { mask: tile('cs-light', st.seed, 256, 6, 4, 115, 2, 0.6), size: 120, color: lighter(25), blend: 'screen', opacity: 0.4 * g, turn: false },
+      { image: relief(`carved:${st.seed}`, 128, () => carvedHeight(st.seed), depth, rl), size: 64, blend: 'hard-light', turn: false },
+      { image: relief(`chisel:${st.seed}`, 128, () => carvedHeight(st.seed + 7, false), depth * 0.22, rl), size: 34, blend: 'hard-light', turn: false },
+    ];
+  },
   chrome: (st) => metalLayers(st),
   gold: (st) => metalLayers(st),
   copper: (st) => metalLayers(st),
