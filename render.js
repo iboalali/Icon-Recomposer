@@ -191,7 +191,7 @@ function shapeMarkup(shape, scene, extra = '') {
     return out;
   }
   const edge = st.chamfer || st.fillet ? '<div class="ir-edge"></div>' : '';
-  const tex = textureMarkup(shape, light);
+  const tex = textureMarkup(shape, light, scene);
   const inner = coversEdge(st) ? edge + tex : tex + edge;
   out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars}">${inner}</div>`;
   return out;

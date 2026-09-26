@@ -370,6 +370,72 @@ function crumpleMasks(seed) {
   return { nx: [cache.get(key('-x')), cache.get(key('+x'))], ny: [cache.get(key('-y')), cache.get(key('+y'))] };
 }
 
+// Relief: a height map (alpha, 1 is high) lit by the scene light as a bumpy
+// surface. The light is written into the SVG, since an image cannot read CSS
+// variables, so each light gets its own image. A flat surface comes out 50%
+// gray, which a hard-light layer leaves unchanged; lit slopes lighten and
+// shaded ones darken, over the surface's own shading. The filter works on a
+// margin around the tile, because normals at the edge of a filter region are
+// wrong and would show a seam where the tiles meet.
+// height() returns, only when the image is not cached yet:
+//   height.filter: primitives giving the height, from SourceGraphic;
+//   height.draw: what they filter (default: a rect over the margin);
+//   height.tile: repeat the height, made at tile size, over the margin;
+//   spec: { exp, k } for a specular highlight.
+const litCache = new Map();
+function litImage(key, make) {
+  let v = litCache.get(key);
+  if (v) litCache.delete(key);
+  else v = `url('data:image/svg+xml,${encodeURIComponent(make())}')`;
+  litCache.set(key, v);
+  if (litCache.size > 300) litCache.delete(litCache.keys().next().value);
+  return v;
+}
+
+// The scene light over a layer (l: the light in the layer's frame) as a
+// distant light: it comes from the light's direction, lower the further the
+// light is from straight above. Rounded, so dragging the light reuses images.
+function reliefLight(l, scene) {
+  const two = (a) => Math.round(a / 2) * 2;
+  const tw = (v) => Math.round(v * 20) / 20;
+  return {
+    az: two((Math.atan2(l.y, l.x) * 180) / Math.PI),
+    el: two(90 - 40 * Math.min(1.5, Math.hypot(l.x, l.y))),
+    key: tw(scene.key),
+    fill: tw(scene.fill),
+  };
+}
+
+function relief(key, size, height, depth, rl, spec = null) {
+  const id = `${key}:${num(depth)}:${rl.az}:${rl.el}:${rl.key}:${rl.fill}${spec ? `:${spec.exp}:${spec.k}` : ''}`;
+  return litImage(id, () => {
+    const h = height();
+    const m = 4;
+    const e = (rl.el * Math.PI) / 180;
+    // Key light sets the contrast of the relief, fill light lifts its shadows.
+    const hi = num(0.5 + 0.6 * rl.key);
+    const lo = num(0.5 - 0.6 * rl.key * (1 - rl.fill * 0.5));
+    const light = `<feDistantLight azimuth="${rl.az}" elevation="${rl.el}"/>`;
+    let fx = h.filter + (h.tile ? '<feTile result="h"/>' : '<feComponentTransfer result="h"/>');
+    fx += `<feDiffuseLighting in="h" surfaceScale="${num(depth)}" diffuseConstant="${num(0.5 / Math.sin(e))}" lighting-color="#fff">${light}</feDiffuseLighting>`;
+    fx += `<feComponentTransfer result="d">${['R', 'G', 'B'].map((c) => `<feFunc${c} type="table" tableValues="${lo} 0.5 ${hi}"/>`).join('')}</feComponentTransfer>`;
+    if (spec) {
+      // Minus what a flat surface reflects, so flat stays 50% gray.
+      const k = spec.k * rl.key;
+      const flat = num(k * Math.sqrt((1 + Math.sin(e)) / 2) ** spec.exp);
+      fx += `<feSpecularLighting in="h" surfaceScale="${num(depth)}" specularConstant="${num(k)}" specularExponent="${spec.exp}" lighting-color="#fff">${light}</feSpecularLighting>`
+        // Chrome's specular result is white at an alpha of the intensity.
+        + `<feColorMatrix type="matrix" values="0 0 0 1 ${-flat} 0 0 0 1 ${-flat} 0 0 0 1 ${-flat} 0 0 0 0 1"/>`
+        + '<feComposite in="d" operator="arithmetic" k2="1" k3="1"/>';
+    }
+    const box = `x="${-m}" y="${-m}" width="${size + m * 2}" height="${size + m * 2}"`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">
+<filter id="f" filterUnits="userSpaceOnUse" primitiveUnits="userSpaceOnUse" ${box} color-interpolation-filters="sRGB">${fx}</filter>
+<g filter="url(#f)">${h.draw || `<rect ${box}/>`}</g>
+</svg>`;
+  });
+}
+
 // Isotropic noise tiles, keyed by everything that shapes them.
 const tile = (name, seed, size, period, octaves, base, k, t) =>
   mask(`${name}:${seed}`, () => svgTile(size, noise(size, period, period, octaves, ns(base, seed)) + cut(k, t)));
@@ -394,7 +460,9 @@ function turn(light, deg) {
 //   repeat: false for a single image; color: CSS color, or bg: any background;
 //   blend: mix-blend-mode; opacity: number; angle: extra rotation in degrees;
 //   turn: false to ignore the texture angle; pos: mask position offset;
-//   shift: false to keep the pattern where it is on Shuffle.
+//   shift: false to keep the pattern where it is on Shuffle;
+//   image: an inline url('…') tiled as the background instead of a mask,
+//   sized and placed the same way.
 const TEXTURES = {
   wood: (st) => {
     const rings = st.woodFigure === 'rings';
@@ -1003,10 +1071,8 @@ function layerMarkup(layer, st, d) {
     css += `background:${layer.color};`;
   }
   if (layer.css) css += `${layer.css};`;
-  if (layer.mask) {
+  if (layer.mask || layer.image) {
     const size = layer.size * st.texScale;
-    css += `mask-image:${layer.mask};mask-size:${num(size)}px;`;
-    if (layer.repeat === false) css += 'mask-repeat:no-repeat;';
     // A shuffled tile also starts at a random point, so repeats of the
     // pattern don't line up with the shape's edges the same way.
     let x = layer.pos?.x || 0;
@@ -1015,7 +1081,14 @@ function layerMarkup(layer, st, d) {
       x += rand(st.seed, 90) * size;
       y += rand(st.seed, 91) * size;
     }
-    if (x || y) css += `mask-position:calc(50% + ${num(x)}px) calc(50% + ${num(y)}px);`;
+    const pos = `calc(50% + ${num(x)}px) calc(50% + ${num(y)}px)`;
+    if (layer.image) {
+      css += `background-image:${layer.image};background-size:${num(size)}px;background-position:${pos};`;
+    } else {
+      css += `mask-image:${layer.mask};mask-size:${num(size)}px;`;
+      if (layer.repeat === false) css += 'mask-repeat:no-repeat;';
+      if (x || y) css += `mask-position:${pos};`;
+    }
   }
   if (layer.blend) css += `mix-blend-mode:${layer.blend};`;
   if (layer.opacity !== undefined && layer.opacity < 1) css += `opacity:${num(Math.max(0, layer.opacity))};`;
@@ -1023,12 +1096,12 @@ function layerMarkup(layer, st, d) {
 }
 
 // light: the scene light in the shape's own frame.
-export function textureMarkup(shape, light) {
+export function textureMarkup(shape, light, scene) {
   const st = shape.style;
   const make = TEXTURES[st.material];
   if (!make) return '';
   const d = Math.ceil(Math.hypot(shape.w, shape.h)) + 2;
-  const layers = make(st, light, shape).map((l) => layerMarkup(l, st, d)).join('');
+  const layers = make(st, light, shape, scene).map((l) => layerMarkup(l, st, d)).join('');
   let out = `<div class="ir-tex">${layers}</div>`;
   if (st.material === 'felt' && st.fuzz > 0) out += feltFuzz(shape);
   if (hasFinish(st.material) && st.finish !== 'matte') {
