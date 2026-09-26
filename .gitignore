@@ -15,3 +15,6 @@ npm-debug.log*
 # Logs / temp
 *.log
 .cache/
+
+# Local screenshots and recordings
+/captures

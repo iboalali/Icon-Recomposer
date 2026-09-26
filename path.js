@@ -1,8 +1,6 @@
-// path.js — SVG/VD path normalization, transform baking, bbox, serialization.
-//
-// This is the shared, riskiest heart (PLAN §13): every `d`/`pathData` from
-// either importer flows through here, and derive() leans on it for cast-shadow
-// offsetting and bbox-driven gradient geometry.
+// path.js: SVG/VectorDrawable path data parsing, normalization, transform
+// baking, bbox and serialization. vdimport.js uses it to read VectorDrawable
+// paths.
 //
 // Normalized form: an array of segments, each one of
 //   { c: 'M', x, y }

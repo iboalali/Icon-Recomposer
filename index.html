@@ -1,429 +1,222 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Icon Recomposer</title>
-  <meta name="description" content="A browser tool that adds a subtle 3D emboss to SVG and Android VectorDrawable icons with a movable light — exports matching PNG, VectorDrawable XML, and SVG." />
-  <link rel="canonical" href="https://iboalali.com/Icon-Recomposer/" />
-  <!-- Open Graph / Twitter link-preview cards -->
-  <meta property="og:type" content="website" />
-  <meta property="og:title" content="Icon Recomposer" />
-  <meta property="og:description" content="A browser tool that adds a subtle 3D emboss to SVG and Android VectorDrawable icons with a movable light — exports matching PNG, VectorDrawable XML, and SVG." />
-  <meta property="og:url" content="https://iboalali.com/Icon-Recomposer/" />
-  <meta property="og:image" content="https://iboalali.com/Icon-Recomposer/assets/android%20head%20app%20icon-iwb.png" />
-  <meta property="og:image:width" content="1024" />
-  <meta property="og:image:height" content="1024" />
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Icon Recomposer" />
-  <meta name="twitter:description" content="A browser tool that adds a subtle 3D emboss to SVG and Android VectorDrawable icons with a movable light — exports matching PNG, VectorDrawable XML, and SVG." />
-  <meta name="twitter:image" content="https://iboalali.com/Icon-Recomposer/assets/android%20head%20app%20icon-iwb.png" />
-  <!-- Anonymous, privacy-friendly usage analytics (TelemetryDeck Web SDK).
-       Sends one pageview per load; no cookies. Signals from localhost/file
-       are auto-flagged as test mode. -->
-  <script src="https://cdn.telemetrydeck.com/websdk/telemetrydeck.min.js"
-          data-app-id="11D5C3D9-D37D-4A87-B22D-B3DAD39E31D8"></script>
+  <meta name="description" content="Design lit, layered app icons in the browser and export many variants as PNG." />
   <link rel="icon" type="image/png" href="assets/favicon-64.png" />
-  <!-- PWA: installable + offline (see manifest.webmanifest, sw.js) -->
-  <link rel="manifest" href="manifest.webmanifest" />
-  <meta name="theme-color" content="#0f1115" />
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Recomposer" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <img class="brand-icon" src="assets/brand-64.png" alt="" />
-      <span class="brand-name">Icon&nbsp;Recomposer</span>
+      <span class="brand-name">Icon Recomposer</span>
       <span class="version" id="app-version"></span>
     </div>
-    <input id="doc-name" class="doc-name" type="text" placeholder="icon"
-           title="Document name — used for the export / save filename"
-           autocomplete="off" spellcheck="false" />
-
-    <!-- Toolbar. Items carry data-priority (lower = collapses into the ⋯ menu
-         first) so the bar degrades gracefully as it narrows (see setupToolbarOverflow). -->
+    <input id="doc-name" class="doc-name" type="text" spellcheck="false" aria-label="Document name" />
     <div class="toolbar">
-      <button id="btn-new" class="tbtn" data-priority="6" title="New document">New</button>
-
-      <label class="tbtn" for="file-open" data-priority="5" title="Open project or import vector (Ctrl/⌘O)">Open</label>
-      <input id="file-open" type="file" accept=".icjson,.json,.svg,.xml,application/json,image/svg+xml,text/xml" hidden />
-
-      <!-- Watch (File System Access API): shown only on browsers that support it;
-           opt-in — reloads the open file when an external program changes it. -->
-      <button id="btn-watch" class="tbtn" data-priority="3" hidden aria-pressed="false"
-              title="Reload the open file when an external program changes it">Watch external edits</button>
-
-      <button id="btn-save" class="tbtn" data-priority="4" title="Save project (.icjson) (Ctrl/⌘S)">Save</button>
-
-      <!-- Save As (File System Access API): shown only where supported. -->
-      <button id="btn-save-as" class="tbtn" data-priority="4" hidden
-              title="Save to a new file (Ctrl/⌘+Shift+S)">Save As…</button>
-
-      <label class="tbtn" for="file-import" data-priority="3" title="Import vector (SVG / VectorDrawable)">Import</label>
-      <input id="file-import" type="file" accept=".json,.svg,.xml,application/json,image/svg+xml,text/xml" hidden />
-
-      <div class="dropdown">
-        <button id="btn-export" class="tbtn" aria-haspopup="true">Export ▾</button>
-        <div class="menu" id="export-menu" hidden>
-          <button data-export="png-transparent">PNG · transparent</button>
-          <button data-export="png-bg">PNG · with background</button>
-          <button data-export="vd">VectorDrawable XML</button>
-          <button data-export="svg">SVG</button>
-          <button data-export="project">Project file (.icjson)</button>
-          <button data-export="share">Copy share link</button>
-        </div>
-      </div>
-
-      <!-- Install (PWA): shown only when the browser offers installation; clicking
-           it triggers the native install — no automatic prompt (see setupInstall). -->
-      <button id="btn-install" class="tbtn" hidden title="Install Icon Recomposer as an app">⬇ Install</button>
-
-      <!-- Overflow: holds whatever doesn't fit (populated by setupToolbarOverflow). -->
-      <div class="dropdown" id="more-dropdown" hidden>
-        <button id="btn-more" class="tbtn" aria-haspopup="true" title="More">⋯</button>
-        <div class="menu" id="more-menu" hidden></div>
-      </div>
-
+      <button class="tbtn" id="btn-new" type="button">New</button>
+      <button class="tbtn" id="btn-open" type="button" title="Open project (Ctrl+O)">Open</button>
+      <button class="tbtn" id="btn-save" type="button" title="Save project (Ctrl+S)">Save</button>
+      <button class="tbtn" id="btn-import" type="button" title="Import an Android VectorDrawable as shapes">Import…</button>
       <span class="spacer"></span>
-      <a id="changelog-link" class="topbar-link" data-priority="2"
-         href="https://iboalali.com/app/icon_recomposer/?utm_source=icon-recomposer&amp;utm_medium=app"
-         target="_blank" rel="noopener noreferrer"
-         title="What's new (changelog)">Changelog</a>
-      <a id="privacy-link" class="topbar-link" data-priority="1"
-         href="https://iboalali.com/app/icon_recomposer/privacy/?utm_source=icon-recomposer&amp;utm_medium=app"
-         target="_blank" rel="noopener noreferrer"
-         title="Privacy Policy">Privacy</a>
-      <button id="btn-undo" class="tbtn icon" title="Undo (Ctrl+Z)">⟲</button>
-      <button id="btn-redo" class="tbtn icon" title="Redo (Ctrl+Shift+Z)">⟳</button>
+      <button class="tbtn icon" id="btn-undo" type="button" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+      <button class="tbtn icon" id="btn-redo" type="button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
+      <button class="tbtn primary" id="btn-export" type="button">Export PNG…</button>
+      <button class="tbtn" id="btn-about" type="button">About</button>
     </div>
+    <input id="file-open" type="file" accept=".icjson,.json,application/json" hidden />
+    <input id="file-import" type="file" accept=".xml,text/xml,application/xml" hidden />
   </header>
 
   <main class="workspace">
-    <!-- LEFT: layers -->
-    <aside class="panel" id="layers-panel">
-      <div class="panel-head">
-        <h2>Layers</h2>
-      </div>
-      <ul id="layer-list" class="layer-list"></ul>
-      <p class="hint">Top of the list paints last (front-most). Ctrl/⌘- or Shift-click to select multiple.</p>
+    <aside class="panel left">
+      <section class="block">
+        <div class="block-head">
+          <h2>Shapes</h2>
+          <div class="head-actions">
+            <button class="tbtn small" id="btn-add-rect" type="button" title="Add rectangle">+ Rect</button>
+            <button class="tbtn small" id="btn-add-ellipse" type="button" title="Add circle">+ Circle</button>
+          </div>
+        </div>
+        <ol class="shape-list" id="shape-list"></ol>
+        <div class="row-actions">
+          <button class="tbtn small" id="btn-shape-up" type="button" title="Move up">Up</button>
+          <button class="tbtn small" id="btn-shape-down" type="button" title="Move down">Down</button>
+          <button class="tbtn small" id="btn-shape-dup" type="button" title="Duplicate (Ctrl+D)">Duplicate</button>
+          <button class="tbtn small danger" id="btn-shape-del" type="button" title="Delete (Del)">Delete</button>
+          <button class="tbtn small" id="btn-shape-copy" type="button" title="Copy the selected shapes to other variants">Copy to…</button>
+        </div>
+      </section>
+      <section class="block">
+        <label class="check">
+          <input type="checkbox" id="edit-all" />
+          <span>Apply edits to all variants</span>
+        </label>
+        <p class="hint">When on, changes to shapes, light and background go to every variant. Variant names stay separate.</p>
+      </section>
     </aside>
 
-    <!-- CENTER: canvas -->
-    <section class="stage" id="stage">
-      <div class="canvas-wrap" id="canvas-wrap">
-        <div class="checker" id="checker"></div>
-        <div class="preview" id="preview"></div>
-        <svg class="selection-overlay" id="selection-overlay" preserveAspectRatio="xMidYMid meet" hidden></svg>
-        <div class="light-overlay" id="light-overlay">
-          <div class="light-handle" id="light-handle" title="Drag to move the light"></div>
+    <section class="stage-area">
+      <div class="canvas-box" id="canvas-box">
+        <div class="stage-frame" id="stage-frame">
+          <div class="stage-host" id="stage-host"></div>
+          <div class="overlay" id="overlay">
+            <svg class="guide-layer" id="guide-layer" viewBox="0 0 108 108" hidden></svg>
+            <div class="guides" id="guides" hidden>
+              <div class="guide-viewport"></div>
+              <div class="guide-safe"></div>
+            </div>
+            <div id="outlines"></div>
+            <div class="marquee" id="marquee" hidden></div>
+            <div class="selection" id="selection" hidden>
+              <div class="handle rot" data-handle="rot"></div>
+              <div class="handle" data-handle="-1,-1"></div>
+              <div class="handle" data-handle="0,-1"></div>
+              <div class="handle" data-handle="1,-1"></div>
+              <div class="handle" data-handle="1,0"></div>
+              <div class="handle" data-handle="1,1"></div>
+              <div class="handle" data-handle="0,1"></div>
+              <div class="handle" data-handle="-1,1"></div>
+              <div class="handle" data-handle="-1,0"></div>
+            </div>
+          </div>
         </div>
+      </div>
+      <div class="canvas-bar">
+        <label class="check"><input type="checkbox" id="show-guides" /> <span>Android guides</span></label>
+        <span class="guide-controls" id="guide-controls" hidden>
+          <label class="check"><input type="checkbox" id="show-trace" /> <span id="trace-label">Tracing guide</span></label>
+          <button class="tbtn small" id="btn-trace-remove" type="button" title="Remove the tracing guide">Remove</button>
+        </span>
+        <span class="spacer"></span>
+        <div class="zoom-controls">
+          <button class="tbtn small" id="btn-zoom-sel" type="button" title="Zoom to selection (Shift+2)">Zoom to selection</button>
+          <button class="tbtn small" id="btn-zoom-fit" type="button" title="Fit (Shift+1, Ctrl+0)">Fit</button>
+          <button class="tbtn small icon" id="btn-zoom-out" type="button" title="Zoom out (Ctrl+-)" aria-label="Zoom out">−</button>
+          <span class="zoom-level" id="zoom-level">100%</span>
+          <button class="tbtn small icon" id="btn-zoom-in" type="button" title="Zoom in (Ctrl+=)" aria-label="Zoom in">+</button>
+        </div>
+      </div>
+      <div class="variants">
+        <div class="block-head">
+          <h2>Variants</h2>
+          <div class="head-actions">
+            <button class="tbtn small" id="btn-var-copy" type="button" title="Copy parts of this variant to other variants">Copy to…</button>
+            <button class="tbtn small" id="btn-var-dup" type="button">Duplicate</button>
+            <button class="tbtn small danger" id="btn-var-del" type="button">Delete</button>
+          </div>
+        </div>
+        <div class="variant-strip" id="variant-strip"></div>
       </div>
     </section>
 
-    <!-- RIGHT: inspector -->
-    <aside class="panel" id="inspector">
-      <!-- Scene panel (nothing selected) -->
-      <div id="scene-panel">
-        <div class="panel-head"><h2>Scene</h2></div>
-
-        <fieldset class="group">
-          <legend>Light</legend>
-          <label class="row">
-            <span>Type</span>
-            <select id="light-type">
-              <option value="point">Point (radial)</option>
-              <option value="distant">Distant (linear)</option>
-              <option value="off">Off (no light)</option>
-            </select>
-          </label>
-          <label class="row" id="row-light-x">
-            <span>Position X</span>
-            <input id="light-x" type="number" step="0.5" class="num" />
-          </label>
-          <label class="row" id="row-light-y">
-            <span>Position Y</span>
-            <input id="light-y" type="number" step="0.5" class="num" />
-          </label>
-          <label class="row" id="row-azimuth">
-            <span>Azimuth</span>
-            <input id="light-azimuth" type="range" min="0" max="360" step="1" />
-            <output id="out-azimuth"></output>
-          </label>
-          <label class="row" id="row-elevation">
-            <span>Elevation</span>
-            <input id="light-elevation" type="range" min="0" max="90" step="1" />
-            <output id="out-elevation"></output>
-          </label>
-          <label class="row" id="row-intensity">
-            <span>Intensity</span>
-            <input id="light-intensity" type="range" min="0" max="2" step="0.01" />
-            <output id="out-intensity"></output>
-          </label>
-        </fieldset>
-
-        <fieldset class="group">
-          <legend>Canvas</legend>
-          <label class="row">
-            <span>Width</span>
-            <input id="canvas-w" type="number" min="1" step="1" class="num" />
-          </label>
-          <label class="row">
-            <span>Height</span>
-            <input id="canvas-h" type="number" min="1" step="1" class="num" />
-          </label>
-          <label class="row">
-            <span>Link W/H</span>
-            <input id="canvas-lock" type="checkbox" checked
-                   title="Keep width and height in the same ratio when resizing" />
-          </label>
-          <div class="row">
-            <span>Presets</span>
-            <div class="presets">
-              <button type="button" class="chip preset-size" data-size="24">24</button>
-              <button type="button" class="chip preset-size" data-size="108">108</button>
-              <button type="button" class="chip preset-size" data-size="512">512</button>
-              <button type="button" class="chip preset-size" data-size="1024">1024</button>
-            </div>
-          </div>
-          <label class="row">
-            <span>Scale contents</span>
-            <input id="canvas-scale" type="checkbox" checked
-                   title="Scale all layers and the light to fit the new canvas size" />
-          </label>
-          <label class="row">
-            <span>Transparent</span>
-            <input id="bg-transparent" type="checkbox" />
-          </label>
-          <label class="row" id="row-bg-color">
-            <span>Background</span>
-            <button id="bg-color" type="button" class="swatch"></button>
-          </label>
-          <label class="row">
-            <span>PNG size</span>
-            <input id="png-size" type="number" min="16" step="1" class="num" />
-            <span class="unit">px</span>
-          </label>
-        </fieldset>
-      </div>
-
-      <!-- Layer panel (a layer is selected) -->
-      <div id="layer-panel" hidden>
-        <div class="panel-head">
-          <h2 id="layer-panel-title">Layer</h2>
-          <button id="layer-deselect" class="link" title="Back to scene">Scene ▸</button>
-        </div>
-
-        <label class="row" id="row-layer-name">
-          <span>Name</span>
-          <input id="layer-name" type="text" />
-        </label>
-
-        <fieldset class="group">
-          <legend>Position</legend>
-          <label class="row">
-            <span>X</span>
-            <input id="layer-x" type="number" step="0.5" class="num"
-                   title="Left edge of the layer in canvas units (may go off-canvas)" />
-          </label>
-          <label class="row">
-            <span>Y</span>
-            <input id="layer-y" type="number" step="0.5" class="num"
-                   title="Top edge of the layer in canvas units (may go off-canvas)" />
-          </label>
-        </fieldset>
-
-        <fieldset class="group">
-          <legend>Scale</legend>
-          <div class="row">
-            <span>Link X / Y</span>
-            <button id="scale-link" type="button" class="link" aria-pressed="true"
-                    title="Link X and Y scale (uniform). Click to unlock independent axes.">🔗 Linked</button>
-          </div>
-          <label class="row" id="row-scale">
-            <span>Scale %</span>
-            <input id="layer-scale" type="number" step="1" min="1" class="num"
-                   title="Resize the layer in place. 100 = original. The layer may extend off-canvas; its path data is preserved." />
-          </label>
-          <label class="row" id="row-scale-x" hidden>
-            <span>X %</span>
-            <input id="layer-scale-x" type="number" step="1" min="1" class="num"
-                   title="Horizontal scale in place. 100 = original (may go off-canvas)." />
-          </label>
-          <label class="row" id="row-scale-y" hidden>
-            <span>Y %</span>
-            <input id="layer-scale-y" type="number" step="1" min="1" class="num"
-                   title="Vertical scale in place. 100 = original (may go off-canvas)." />
-          </label>
-          <div class="row">
-            <span>Flip</span>
-            <div class="presets">
-              <button id="flip-h" type="button" class="chip" aria-pressed="false"
-                      title="Flip horizontally (mirror left ↔ right)">⇆ H</button>
-              <button id="flip-v" type="button" class="chip" aria-pressed="false"
-                      title="Flip vertically (mirror top ↔ bottom)">⇅ V</button>
-            </div>
-          </div>
-        </fieldset>
-
-        <fieldset class="group">
-          <legend>Material</legend>
-          <label class="row">
-            <span>Base color</span>
-            <button id="mat-color" type="button" class="swatch"></button>
-          </label>
-          <label class="row">
-            <span>Opacity</span>
-            <input id="mat-alpha" type="range" min="0" max="1" step="0.01" />
-            <output id="out-alpha"></output>
-          </label>
-          <div class="row stack" id="row-fill">
-            <span>Fill</span>
-            <div class="seg">
-              <label><input type="radio" name="fillmode" value="solid" /> Solid</label>
-              <label><input type="radio" name="fillmode" value="embossed" /> Embossed</label>
-              <label><input type="radio" name="fillmode" value="gradient" /> Gradient</label>
-            </div>
-          </div>
-          <label class="row" id="row-emboss">
-            <span>Emboss</span>
-            <input id="mat-emboss" type="range" min="0" max="2" step="0.01" />
-            <output id="out-emboss"></output>
-          </label>
-          <label class="row" id="row-sheen">
-            <span>Sheen</span>
-            <input id="mat-sheen-on" type="checkbox" />
-            <input id="mat-sheen" type="range" min="0" max="1" step="0.01" />
-          </label>
-          <div id="gradient-editor" hidden>
-            <!-- Simple path: a preview, one-click "looks", From→To colors, and a
-                 direction pad (centre dot = radial). The full multi-stop editor
-                 and exact coordinates live under "Advanced" below. -->
-            <div class="row"><span>Preview</span><div id="grad-bar" class="grad-bar"></div></div>
-            <div class="row stack">
-              <span>Quick looks</span>
-              <div class="grad-presets">
-                <button type="button" class="chip" data-preset="toplight">Top light</button>
-                <button type="button" class="chip" data-preset="glow">Glow</button>
-                <button type="button" class="chip" data-preset="sheen">Sheen</button>
-                <button type="button" class="chip" data-preset="diagonal">Diagonal</button>
-                <button type="button" class="chip" data-preset="fade">Fade out</button>
-              </div>
-            </div>
-            <div class="row">
-              <span>Colors</span>
-              <span class="grad-fromto">
-                <button id="grad-from" type="button" class="swatch" title="Start color"></button>
-                <span class="grad-arrow" aria-hidden="true">→</span>
-                <button id="grad-to" type="button" class="swatch" title="End color"></button>
-              </span>
-              <label class="grad-fade" title="Fade the end colour out to transparent">
-                <input id="grad-fade" type="checkbox" /> Fade
-              </label>
-            </div>
-            <div class="row stack">
-              <span>Direction</span>
-              <div class="dir-pad" id="dir-pad">
-                <button type="button" data-dir="nw" title="Diagonal ↘ (from top-left)">↖</button>
-                <button type="button" data-dir="n" title="Top → bottom">↑</button>
-                <button type="button" data-dir="ne" title="Diagonal ↙ (from top-right)">↗</button>
-                <button type="button" data-dir="w" title="Left → right">←</button>
-                <button type="button" data-dir="radial" title="Radial — spread from the centre">◉</button>
-                <button type="button" data-dir="e" title="Right → left">→</button>
-                <button type="button" data-dir="sw" title="Diagonal ↗ (from bottom-left)">↙</button>
-                <button type="button" data-dir="s" title="Bottom → top">↓</button>
-                <button type="button" data-dir="se" title="Diagonal ↖ (from bottom-right)">↘</button>
-              </div>
-            </div>
-
-            <details class="grad-advanced">
-              <summary>Advanced</summary>
-              <label class="row">
-                <span>Type</span>
-                <select id="grad-type">
-                  <option value="linear">Linear</option>
-                  <option value="radial">Radial</option>
-                </select>
-              </label>
-              <div id="grad-stops"></div>
-              <div class="row"><span></span><button id="grad-add" type="button" class="chip">+ Add stop</button></div>
-              <label class="row grad-lin"><span>Start X/Y</span>
-                <input id="grad-x1" class="num" type="number" step="1" /><input id="grad-y1" class="num" type="number" step="1" /></label>
-              <label class="row grad-lin"><span>End X/Y</span>
-                <input id="grad-x2" class="num" type="number" step="1" /><input id="grad-y2" class="num" type="number" step="1" /></label>
-              <label class="row grad-rad"><span>Center X/Y</span>
-                <input id="grad-cx" class="num" type="number" step="1" /><input id="grad-cy" class="num" type="number" step="1" /></label>
-              <label class="row grad-rad"><span>Radius</span>
-                <input id="grad-r" class="num" type="number" step="1" /></label>
-            </details>
-          </div>
-          <label class="row">
-            <span>Fill rule</span>
-            <select id="mat-fillrule">
-              <option value="nonZero">nonZero</option>
-              <option value="evenOdd">evenOdd</option>
-            </select>
-          </label>
-        </fieldset>
-
-        <fieldset class="group">
-          <legend>Cast shadow</legend>
-          <label class="row">
-            <span>Enabled</span>
-            <input id="shadow-on" type="checkbox" />
-          </label>
-          <label class="row">
-            <span>Opacity</span>
-            <input id="shadow-opacity" type="range" min="0" max="1" step="0.01" />
-          </label>
-          <label class="row">
-            <span>Spread</span>
-            <input id="shadow-spread" type="range" min="0" max="1" step="0.01" />
-          </label>
-          <label class="row">
-            <span>Distance</span>
-            <input id="shadow-distance" type="range" min="0" max="3" step="0.05"
-                   title="How far the shadow is thrown (the layer's apparent height); 1 = the auto length from the light" />
-            <output id="out-shadow-distance"></output>
-          </label>
-          <label class="row">
-            <span>Clip to layers</span>
-            <input id="shadow-clip" type="checkbox"
-                   title="Show the shadow only where it lands on layers below, not on the background" />
-          </label>
-        </fieldset>
-
-        <fieldset class="group">
-          <legend>Stroke (passthrough)</legend>
-          <label class="row">
-            <span>Enabled</span>
-            <input id="stroke-on" type="checkbox" />
-          </label>
-          <label class="row">
-            <span>Color</span>
-            <button id="stroke-color" type="button" class="swatch"></button>
-          </label>
-          <label class="row">
-            <span>Width</span>
-            <input id="stroke-width" type="number" min="0" step="0.1" class="num" />
-          </label>
-          <label class="row">
-            <span>Fill</span>
-            <select id="mat-fillnone">
-              <option value="false">Filled</option>
-              <option value="true">None (stroke only)</option>
-            </select>
-          </label>
-        </fieldset>
-      </div>
-    </aside>
+    <aside class="panel right" id="inspector"></aside>
   </main>
 
-  <div id="toast" class="toast" hidden></div>
+  <div class="dlg-overlay" id="export-overlay" hidden>
+    <div class="dlg export-dlg" role="dialog" aria-modal="true" aria-labelledby="export-title">
+      <h2 class="dlg-title" id="export-title">Export PNG</h2>
+      <div class="export-grid">
+        <div class="export-opts">
+          <fieldset>
+            <legend>Variants</legend>
+            <label class="check"><input type="radio" name="ex-variants" value="current" checked /> <span>Current variant</span></label>
+            <label class="check"><input type="radio" name="ex-variants" value="all" /> <span id="ex-all-label">All variants</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Sizes</legend>
+            <div id="ex-presets"></div>
+            <label class="field">
+              <span>Custom sizes (px)</span>
+              <input type="text" id="ex-custom" placeholder="e.g. 1024, 256" spellcheck="false" />
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Output</legend>
+            <label class="field"><span>Area</span><select id="ex-region"></select></label>
+            <label class="field"><span>Mask</span><select id="ex-mask"></select></label>
+            <label class="check"><input type="checkbox" id="ex-transparent" /> <span>Transparent background</span></label>
+            <p class="hint">Adaptive icon layers always use the whole canvas with no mask, because the launcher applies its own.</p>
+          </fieldset>
+        </div>
+        <div class="export-preview">
+          <div class="checker"><img id="ex-preview" alt="Export preview" /></div>
+          <p class="hint" id="ex-summary"></p>
+        </div>
+      </div>
+      <div class="dlg-actions">
+        <button class="tbtn" id="ex-cancel" type="button">Cancel</button>
+        <button class="tbtn primary" id="ex-go" type="button">Export</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dlg-overlay" id="copy-overlay" hidden>
+    <div class="dlg copy-dlg" role="dialog" aria-modal="true" aria-labelledby="copy-title">
+      <h2 class="dlg-title" id="copy-title">Copy to variants</h2>
+      <p class="hint" id="copy-from"></p>
+      <div class="copy-grid">
+        <div class="export-opts">
+          <fieldset>
+            <legend>Shapes</legend>
+            <label class="check"><input type="radio" name="copy-scope" value="selected" /> <span id="copy-scope-selected">Selected shapes</span></label>
+            <label class="check"><input type="radio" name="copy-scope" value="all" /> <span id="copy-scope-all">All shapes</span></label>
+            <div id="copy-shape-parts"></div>
+          </fieldset>
+          <fieldset>
+            <legend>Variant</legend>
+            <div id="copy-variant-parts"></div>
+          </fieldset>
+        </div>
+        <div class="export-opts">
+          <fieldset>
+            <legend>To</legend>
+            <div id="copy-targets"></div>
+            <div class="row-actions">
+              <button class="tbtn small" id="copy-all" type="button">All</button>
+              <button class="tbtn small" id="copy-none" type="button">None</button>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Apply to</legend>
+            <label class="check"><input type="radio" name="copy-mode" value="change" checked /> <span>The ticked variants</span></label>
+            <label class="check"><input type="radio" name="copy-mode" value="duplicate" /> <span>New copies of the ticked variants (originals stay as they are)</span></label>
+          </fieldset>
+        </div>
+      </div>
+      <p class="hint" id="copy-summary"></p>
+      <div class="dlg-actions">
+        <button class="tbtn" id="copy-cancel" type="button">Cancel</button>
+        <button class="tbtn primary" id="copy-go" type="button">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dlg-overlay" id="about-overlay" hidden>
+    <div class="dlg about-dlg" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <div class="about-head">
+        <img class="about-icon" src="assets/brand-64.png" alt="" />
+        <div>
+          <h2 class="dlg-title" id="about-title">Icon Recomposer</h2>
+          <p class="hint" id="about-version"></p>
+        </div>
+      </div>
+      <p class="about-text">Design lit, layered app icons in the browser and export many variants as PNG. Your work stays in your browser.</p>
+      <p class="about-links">
+        <a href="https://iboalali.com/app/icon_recomposer/?utm_source=icon-recomposer&amp;utm_medium=app" target="_blank" rel="noopener noreferrer">Website</a>
+        <a href="https://iboalali.com/app/icon_recomposer/privacy/?utm_source=icon-recomposer&amp;utm_medium=app" target="_blank" rel="noopener noreferrer">Privacy policy</a>
+      </p>
+      <h3 class="about-sub">Changelog</h3>
+      <div class="about-log" id="about-log"></div>
+      <div class="dlg-actions">
+        <button class="tbtn" id="about-close" type="button">Close</button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="ui.js"></script>
 </body>
