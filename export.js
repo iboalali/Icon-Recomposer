@@ -102,8 +102,27 @@ async function captureSvg(variant, size, region, layer, transparent) {
     + '</foreignObject></svg>';
 }
 
+// Firefox resolves the SVG image's decode() before the texture masks nested in
+// it have loaded, and would paint the shapes without them. Decoding each mask
+// in the page first puts it in the image cache the SVG image reads from.
+const loadedMasks = new Map();
+
+function preloadMasks(svg) {
+  const urls = new Set([...svg.matchAll(/url\('(data:image\/svg\+xml,[^']*)'\)/g)].map((m) => m[1]));
+  return Promise.all([...urls].map((url) => {
+    if (!loadedMasks.has(url)) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = url;
+      loadedMasks.set(url, img.decode().then(() => img, () => null));
+    }
+    return loadedMasks.get(url);
+  }));
+}
+
 export async function renderCanvas(variant, { size, region = 'full', mask = 'none', layer = 'all', transparent = false }) {
   const svg = await captureSvg(variant, size, region, layer, transparent);
+  await preloadMasks(svg);
   const img = new Image();
   img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   await img.decode();

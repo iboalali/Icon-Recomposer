@@ -240,6 +240,7 @@ details.advanced[open] > .adv-body { display: flex; flex-direction: column; gap:
 }
 .hue-range { background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); border-radius: 6px; height: 8px; appearance: none; }
 .hue-range::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid #222; }
+.hue-range::-moz-range-thumb { box-sizing: border-box; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid #222; }
 
 /* ---- export dialog ---- */
 .dlg.export-dlg { width: min(94vw, 720px); }
