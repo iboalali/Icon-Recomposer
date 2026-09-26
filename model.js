@@ -40,6 +40,7 @@ export const MATERIALS = [
   { id: 'terrazzo', label: 'Terrazzo', group: 'Stone' },
   { id: 'slate', label: 'Slate', group: 'Stone' },
   { id: 'concrete', label: 'Concrete', group: 'Stone' },
+  { id: 'stucco', label: 'Stucco', group: 'Stone' },
   { id: 'wood', label: 'Wood', group: 'Natural' },
   { id: 'cork', label: 'Cork', group: 'Natural' },
   { id: 'leather', label: 'Leather', group: 'Natural' },
@@ -164,7 +165,7 @@ const MATERIAL_DEFAULTS = {
 
 // Materials whose pattern Shuffle can change. Seed 0 is each pattern's
 // original layout.
-const SHUFFLED = new Set(['brushed', 'brushed-round', 'blasted', 'anodized', 'wood', 'marble', 'granite', 'terrazzo', 'slate', 'concrete', 'cork', 'paper', 'cardboard', 'denim', 'canvas', 'felt', 'ceramic', 'hammered', 'leather']);
+const SHUFFLED = new Set(['brushed', 'brushed-round', 'blasted', 'anodized', 'wood', 'marble', 'granite', 'terrazzo', 'slate', 'concrete', 'cork', 'paper', 'cardboard', 'denim', 'canvas', 'felt', 'ceramic', 'hammered', 'leather', 'stucco']);
 export function shuffles(st) {
   if (st.material === 'holographic') return st.holoPattern === 'glitter';
   if (st.material === 'chrome' || st.material === 'gold') return st.metalFinish !== 'polished';

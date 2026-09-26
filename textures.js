@@ -508,6 +508,26 @@ const creaseHeight = (seed) => ({
   tile: true,
 });
 
+// Stucco: a low, lumpy relief whose tops the trowel pressed flat, over a
+// sandy tooth fine enough to stay sharp when zoomed in. The noise rises through the middle and eases into a
+// plateau above it, sampled finely so the light shows no kinks.
+const trowel = Array.from({ length: 33 }, (_, k) => {
+  const u = Math.max(0, Math.min(1, (k / 32 - 0.2) / 0.6));
+  return num(u < 0.6 ? u : 0.6 + 0.06 * (1 - Math.exp(-(u - 0.6) / 0.06)));
+}).join(' ');
+const stuccoHeight = (seed) => ({
+  filter: `<feTurbulence x="0" y="0" width="128" height="128" type="fractalNoise" baseFrequency="${3 / 128}" numOctaves="6" seed="${ns(101, seed)}" stitchTiles="stitch"/>`
+    + '<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0"/>'
+    + `<feComponentTransfer result="lumps"><feFuncA type="table" tableValues="${trowel}"/></feComponentTransfer>`
+    + `<feTurbulence x="0" y="0" width="128" height="128" type="fractalNoise" baseFrequency="${96 / 128}" numOctaves="1" seed="${ns(102, seed)}" stitchTiles="stitch"/>`
+    + '<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0"/>'
+    + '<feComposite in="lumps" operator="arithmetic" k2="1" k3="0.07" result="sand"/>'
+    + `<feTurbulence x="0" y="0" width="128" height="128" type="fractalNoise" baseFrequency="${200 / 128}" numOctaves="1" seed="${ns(104, seed)}" stitchTiles="stitch"/>`
+    + '<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0"/>'
+    + '<feComposite in="sand" operator="arithmetic" k2="1" k3="0.05"/>',
+  tile: true,
+});
+
 // Isotropic noise tiles, keyed by everything that shapes them.
 const tile = (name, seed, size, period, octaves, base, k, t) =>
   mask(`${name}:${seed}`, () => svgTile(size, noise(size, period, period, octaves, ns(base, seed)) + cut(k, t)));
@@ -775,6 +795,12 @@ const TEXTURES = {
     if (st.stitching) layers.push(...stitchLayers(shape, st, light));
     return layers;
   },
+  // Stucco: the trowelled relief lit by the scene light, over a faintly
+  // uneven tone.
+  stucco: (st, light, shape, scene) => [
+    { mask: tile('su-mottle', st.seed, 256, 3, 4, 103, 1.4, 0.45), size: 120, color: darker(10), blend: 'multiply', opacity: 0.6 * Math.min(1, st.grain), turn: false },
+    { image: relief(`stucco:${st.seed}`, 128, () => stuccoHeight(st.seed), (1 + 4 * st.texAmount) * st.grain, reliefLight(light, scene)), size: 64, blend: 'hard-light', turn: false },
+  ],
   chrome: (st) => metalLayers(st),
   gold: (st) => metalLayers(st),
   copper: (st) => metalLayers(st),
