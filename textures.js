@@ -436,6 +436,46 @@ function relief(key, size, height, depth, rl, spec = null) {
   });
 }
 
+// Hammered dents as a height map: a jittered grid of round dents, each a
+// spherical cap of its own size and depth, drawn as gray (white is deepest)
+// and combined with lighten, so neighbors meet in a sharp ridge. Dents near
+// an edge are drawn again on the opposite side, out into the margin.
+function dentHeight(seed) {
+  const n = 6;
+  const size = 128;
+  const c = size / n;
+  let i = 0;
+  const rnd = () => rand(seed + 21, i++);
+  let dents = '';
+  for (let j = 0; j < n; j++) {
+    for (let k = 0; k < n; k++) {
+      const x = (k + 0.5 + (rnd() - 0.5) * 0.7) * c;
+      const y = (j + 0.5 + (rnd() - 0.5) * 0.7) * c;
+      const r = c * (0.72 + rnd() * 0.38);
+      const o = (0.65 + rnd() * 0.35).toFixed(2);
+      for (const ox of [-size, 0, size]) {
+        for (const oy of [-size, 0, size]) {
+          const cx = x + ox;
+          const cy = y + oy;
+          if (cx + r < -4 || cy + r < -4 || cx - r > size + 4 || cy - r > size + 4) continue;
+          dents += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="url(#d)" fill-opacity="${o}"/>`;
+        }
+      }
+    }
+  }
+  const cap = Array.from({ length: 17 }, (_, k) => {
+    const p = Math.sin((k / 16) * (Math.PI / 2));
+    const v = Math.round(Math.sqrt(1 - p * p) * 255);
+    return `<stop offset="${p.toFixed(3)}" stop-color="rgb(${v} ${v} ${v})"/>`;
+  }).join('');
+  return {
+    draw: `<defs><style>circle{mix-blend-mode:lighten}</style><radialGradient id="d">${cap}</radialGradient></defs><rect x="-4" y="-4" width="${size + 8}" height="${size + 8}"/>${dents}`,
+    // The blur hides the steps of the 8-bit gray, which the light would
+    // show as contour lines.
+    filter: '<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1 0 0 0 1"/><feGaussianBlur stdDeviation="0.8"/>',
+  };
+}
+
 // Isotropic noise tiles, keyed by everything that shapes them.
 const tile = (name, seed, size, period, octaves, base, k, t) =>
   mask(`${name}:${seed}`, () => svgTile(size, noise(size, period, period, octaves, ns(base, seed)) + cut(k, t)));
@@ -676,6 +716,18 @@ const TEXTURES = {
       { mask: fiberMask('fe-light', st.seed + 1, 1000, [6, 14], 1.1), size: 18, color: lighter(28), blend: 'screen', opacity: 0.45 * g },
       { mask: tile('fe-fine', st.seed, 256, 180, 1, 78, 3, 0.5), size: 60, color: darker(10), blend: 'multiply', opacity: 0.5 * g },
       { fit: true, css: `box-shadow:inset 0 0 1.4px 0.5px ${lighter(22)}`, opacity: st.fuzz },
+    ];
+  },
+  // Hammered metal: the shape color as the metal, a broad sheen across it,
+  // and the dents lit from the scene light, with a highlight on each for a
+  // satin or glossy finish.
+  hammered: (st, light, shape, scene) => {
+    const a = num((Math.atan2(light.y, light.x) * 180) / Math.PI + 270);
+    const spec = { satin: { exp: 6, k: 0.45 }, gloss: { exp: 48, k: 1.8 } }[st.finish];
+    const depth = (1.5 + 9 * st.texAmount) * st.grain;
+    return [
+      { fit: true, bg: `linear-gradient(${a}deg, ${lighter(40)} 0%, transparent 40%, transparent 65%, ${darker(35)} 100%)`, blend: 'soft-light' },
+      { image: relief(`hammered:${st.seed}`, 128, () => dentHeight(st.seed), depth, reliefLight(light, scene), spec), size: 48, blend: 'hard-light', turn: false },
     ];
   },
   chrome: (st) => metalLayers(st),

@@ -34,6 +34,7 @@ export const MATERIALS = [
   { id: 'gold', label: 'Gold', group: 'Metal' },
   { id: 'copper', label: 'Copper', group: 'Metal' },
   { id: 'anodized', label: 'Anodized aluminum', group: 'Metal' },
+  { id: 'hammered', label: 'Hammered metal', group: 'Metal' },
   { id: 'marble', label: 'Marble', group: 'Stone' },
   { id: 'granite', label: 'Granite', group: 'Stone' },
   { id: 'terrazzo', label: 'Terrazzo', group: 'Stone' },
@@ -156,11 +157,12 @@ const MATERIAL_DEFAULTS = {
   jelly: { frost: 0.1 },
   denim: { texAmount: 0.35, stitching: true, accent: '#d9a13b' },
   canvas: { texAmount: 0.6 },
+  hammered: { finish: 'gloss' },
 };
 
 // Materials whose pattern Shuffle can change. Seed 0 is each pattern's
 // original layout.
-const SHUFFLED = new Set(['brushed', 'brushed-round', 'blasted', 'anodized', 'wood', 'marble', 'granite', 'terrazzo', 'slate', 'concrete', 'cork', 'paper', 'cardboard', 'denim', 'canvas', 'felt', 'ceramic']);
+const SHUFFLED = new Set(['brushed', 'brushed-round', 'blasted', 'anodized', 'wood', 'marble', 'granite', 'terrazzo', 'slate', 'concrete', 'cork', 'paper', 'cardboard', 'denim', 'canvas', 'felt', 'ceramic', 'hammered']);
 export function shuffles(st) {
   if (st.material === 'holographic') return st.holoPattern === 'glitter';
   if (st.material === 'chrome' || st.material === 'gold') return st.metalFinish !== 'polished';
