@@ -19,6 +19,7 @@ const STORAGE_KEY = 'icon-recomposer-2/doc';
 const EXPORT_PREFS_KEY = 'icon-recomposer-2/export';
 const UNSAVED_KEY = 'icon-recomposer-2/unsaved';
 const VARIANT_KEY = 'icon-recomposer-2/variant';
+const SEEN_KEY = 'icon-recomposer-2/seen-version';
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -31,10 +32,21 @@ const state = {
   },
 };
 const history = { undo: [], redo: [], pending: null };
+// Read before the first autosave below, which would make every visit look like
+// a returning one.
+const returning = hasStoredDocument();
 state.ui.variant = loadVariantIndex(state.doc);
 // Saved right away so a fresh sample keeps its ids (and remembered variant)
 // across reloads, not only after the first edit.
 persist();
+
+function hasStoredDocument() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
 
 function loadStoredDocument() {
   try {
@@ -1824,6 +1836,16 @@ function loadChangelog() {
   return changelog;
 }
 
+function changeList(entry) {
+  const ul = document.createElement('ul');
+  for (const change of entry.changes || []) {
+    const li = document.createElement('li');
+    li.textContent = change;
+    ul.append(li);
+  }
+  return ul;
+}
+
 function renderChangelog(list) {
   const box = $('about-log');
   box.replaceChildren();
@@ -1836,13 +1858,7 @@ function renderChangelog(list) {
       tag.textContent = 'this version';
       h.append(tag);
     }
-    const ul = document.createElement('ul');
-    for (const change of entry.changes || []) {
-      const li = document.createElement('li');
-      li.textContent = change;
-      ul.append(li);
-    }
-    box.append(h, ul);
+    box.append(h, changeList(entry));
   }
 }
 
@@ -1861,14 +1877,21 @@ function changelogMessage(text, withLink) {
   $('about-log').replaceChildren(p);
 }
 
-function setupAboutDialog() {
-  const overlay = $('about-overlay');
-  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) closeAbout(); });
+// Closes on Escape, the close button or a click beside the dialog.
+function setupOverlay(id, closeBtn) {
+  const overlay = $(id);
+  const close = () => { overlay.hidden = true; };
+  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) close(); });
   overlay.addEventListener('keydown', (e) => {
     e.stopPropagation();
-    if (e.key === 'Escape') closeAbout();
+    if (e.key === 'Escape') close();
   });
-  $('about-close').addEventListener('click', closeAbout);
+  $(closeBtn).addEventListener('click', close);
+  return close;
+}
+
+function setupAboutDialog() {
+  setupOverlay('about-overlay', 'about-close');
   $('about-version').textContent = `Version ${M.APP_VERSION}`;
 }
 
@@ -1879,14 +1902,66 @@ function openAbout() {
   loadChangelog().then(renderChangelog, () => changelogMessage('The changelog could not be loaded.', true));
 }
 
-function closeAbout() {
-  $('about-overlay').hidden = true;
+// ---------------------------------------------------------------------------
+// help and what's new
+
+function setupHelpDialogs() {
+  setupOverlay('help-overlay', 'help-close');
+  const closeNews = setupOverlay('news-overlay', 'news-close');
+  $('news-help').addEventListener('click', () => {
+    closeNews();
+    openHelp();
+  });
+  $('btn-help').addEventListener('click', openHelp);
+}
+
+function openHelp() {
+  $('help-overlay').hidden = false;
+  $('help-close').focus();
+}
+
+function openNews(entry) {
+  $('news-version').textContent = `Version ${entry.version}`;
+  $('news-log').replaceChildren(changeList(entry));
+  $('news-overlay').hidden = false;
+  $('news-close').focus();
+}
+
+function markSeen() {
+  try {
+    localStorage.setItem(SEEN_KEY, M.APP_VERSION);
+  } catch { /* shown again next time */ }
+}
+
+// A first visit shows the instructions once. After an update, a returning
+// visitor sees that version's changes once. The version counts as seen only
+// once something was shown, so a changelog that can't load yet, or has no
+// entry for this version, is tried again on the next visit.
+function greet() {
+  let seen;
+  try {
+    seen = localStorage.getItem(SEEN_KEY);
+  } catch {
+    return;
+  }
+  if (seen === M.APP_VERSION) return;
+  if (!seen && !returning) {
+    openHelp();
+    markSeen();
+    return;
+  }
+  loadChangelog().then((list) => {
+    const entry = list.find((e) => e.version === M.APP_VERSION);
+    if (!entry || modalOpen()) return;
+    openNews(entry);
+    markSeen();
+  }, () => {});
 }
 
 // ---------------------------------------------------------------------------
 // keyboard
 
-// Any in-page dialog: confirm, export, copy or about. App shortcuts and file
+// Any in-page dialog: confirm, export, copy, about, help or what's new. App shortcuts and file
 // drops are ignored while one is open.
 function modalOpen() {
   return !!document.querySelector('.dlg-overlay:not([hidden])');
@@ -1999,8 +2074,10 @@ async function init() {
   setupExportDialog();
   setupCopyDialog();
   setupAboutDialog();
+  setupHelpDialogs();
   fitStage();
   render();
+  greet();
 }
 
 init().catch((err) => {

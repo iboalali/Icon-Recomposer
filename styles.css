@@ -310,6 +310,9 @@ legend { color: var(--muted); font-size: 12px; padding: 0 0.3rem; }
 .about-log h4 .hint { font-weight: 400; margin-left: 0.4rem; }
 .about-log ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.3rem; }
 .about-log li { color: var(--muted); }
+.help-body { overflow: auto; min-height: 0; flex: 1 1 auto; margin-bottom: 1rem; }
+.help-steps { margin: 0 0 1rem; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.help-tips { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.35rem; color: var(--muted); }
 
 /* ---- toast ---- */
 .toast {

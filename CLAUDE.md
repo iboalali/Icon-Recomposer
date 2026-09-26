@@ -62,7 +62,7 @@ Version 2 is a rewrite. The 1.x app (up to tag `v1.8.0`) shares no code or const
 - Zoom uses CSS `zoom` on the frame (not a transform) so the icon repaints sharp; `toCanvas` reads the live rect, so hit tests and drags need no zoom math.
 - Every in-page dialog uses `.dlg-overlay`; `modalOpen()` blocks shortcuts and file drops while one is visible.
 - `ui.unsaved` (persisted) gates the confirmation on Open and New. A file is parsed before asking, so an invalid file never prompts.
-- The About dialog shows the changelog from `https://iboalali.com/apps.json`, not `CHANGELOG.md`, so a release also needs its entry there.
+- The About dialog shows the changelog from `https://iboalali.com/apps.json`, not `CHANGELOG.md`, so a release also needs its entry there. The same entry is the "What's new" dialog a returning visitor sees once per version (`greet()`, `icon-recomposer-2/seen-version`); a first visit gets the Help dialog instead. Without an entry for `APP_VERSION`, nothing shows and the version stays unseen.
 
 ## Changelog and versioning
 

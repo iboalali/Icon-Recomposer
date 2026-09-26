@@ -26,6 +26,7 @@
       <button class="tbtn icon" id="btn-undo" type="button" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
       <button class="tbtn icon" id="btn-redo" type="button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
       <button class="tbtn primary" id="btn-export" type="button">Export PNG…</button>
+      <button class="tbtn" id="btn-help" type="button" title="How to use Icon Recomposer">Help</button>
       <button class="tbtn" id="btn-about" type="button">About</button>
     </div>
     <input id="file-open" type="file" accept=".icjson,.json,application/json" hidden />
@@ -214,6 +215,55 @@
       <div class="about-log" id="about-log"></div>
       <div class="dlg-actions">
         <button class="tbtn" id="about-close" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dlg-overlay" id="help-overlay" hidden>
+    <div class="dlg about-dlg" role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <div class="about-head">
+        <img class="about-icon" src="assets/brand-64.png" alt="" />
+        <div>
+          <h2 class="dlg-title" id="help-title">Welcome to Icon Recomposer</h2>
+          <p class="hint">Lit, layered app icons in a few steps</p>
+        </div>
+      </div>
+      <div class="help-body">
+        <ol class="help-steps">
+          <li><b>Add shapes.</b> <b>+ Rect</b> and <b>+ Circle</b> add a shape. Drag it on the canvas to move it, and use its handles to resize or rotate it.</li>
+          <li><b>Give them a look.</b> In the inspector, pick a <b>Material</b> and a <b>Surface</b>, and set the color, elevation and edges. <b>Advanced</b> holds the finer settings.</li>
+          <li><b>Light the scene.</b> Drag the dot in <b>Light</b> to move the light. Every shape and the background follow the same light.</li>
+          <li><b>Try variants.</b> Duplicate a variant to try another version side by side. <b>Apply edits to all variants</b> changes all of them at once.</li>
+          <li><b>Export.</b> <b>Export PNG…</b> writes the Play Store icon, launcher icons and adaptive icon layers. Several files download as one zip.</li>
+        </ol>
+        <h3 class="about-sub">Tips</h3>
+        <ul class="help-tips">
+          <li>Shift or Ctrl/Cmd-click selects several shapes, and dragging on empty canvas selects the shapes in a box.</li>
+          <li>The mouse wheel or a pinch zooms. Space-drag or the middle mouse button pans. Shift+1 fits the canvas.</li>
+          <li>Where two shapes overlap, <b>Crossings</b> in the inspector puts either one on top, so shapes can weave.</li>
+          <li><b>Import…</b> starts from an Android VectorDrawable.</li>
+          <li>Your work is saved in this browser as you go. <b>Save</b> keeps it as an <code>.icjson</code> project file.</li>
+        </ul>
+      </div>
+      <div class="dlg-actions">
+        <button class="tbtn primary" id="help-close" type="button">Start designing</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dlg-overlay" id="news-overlay" hidden>
+    <div class="dlg about-dlg" role="dialog" aria-modal="true" aria-labelledby="news-title">
+      <div class="about-head">
+        <img class="about-icon" src="assets/brand-64.png" alt="" />
+        <div>
+          <h2 class="dlg-title" id="news-title">What's new</h2>
+          <p class="hint" id="news-version"></p>
+        </div>
+      </div>
+      <div class="about-log" id="news-log"></div>
+      <div class="dlg-actions">
+        <button class="tbtn" id="news-help" type="button">How to use it</button>
+        <button class="tbtn primary" id="news-close" type="button">Close</button>
       </div>
     </div>
   </div>
