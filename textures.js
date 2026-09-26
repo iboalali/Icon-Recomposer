@@ -325,6 +325,18 @@ function stitchMask(shape, inset) {
   });
 }
 
+// Stitches in the thread color (accent), with their shadow falling away
+// from the light.
+function stitchLayers(shape, st, light) {
+  const m = stitchMask(shape, 2.6);
+  const sx = num(-light.x * 0.3);
+  const sy = num(-light.y * 0.3);
+  return [
+    { fit: true, color: darker(55), css: `mask-image:${m};mask-size:100% 100%;translate:${sx}px ${sy}px`, opacity: 0.6 },
+    { fit: true, color: st.accent, css: `mask-image:${m};mask-size:100% 100%` },
+  ];
+}
+
 // Crumpled paper as one 512px image: a jittered grid split into triangles
 // along random diagonals, each facet tilted a random way. The tilt is stored
 // as four masks (how much each facet faces -x, +x, -y, +y), so the light can
@@ -436,45 +448,65 @@ function relief(key, size, height, depth, rl, spec = null) {
   });
 }
 
-// Hammered dents as a height map: a jittered grid of round dents, each a
-// spherical cap of its own size and depth, drawn as gray (white is deepest)
-// and combined with lighten, so neighbors meet in a sharp ridge. Dents near
-// an edge are drawn again on the opposite side, out into the margin.
-function dentHeight(seed) {
-  const n = 6;
+// A field of round caps as gray (white is highest) in a 128 tile: a
+// jittered n×n grid, each cap of its own size and height, combined with
+// lighten, so neighbors meet in a sharp edge. Caps near an edge are drawn
+// again on the opposite side, out into the margin. `profile` gives the
+// cap's height at a distance 0..1 from its center.
+function capField(seed, n, radius, heights, profile) {
   const size = 128;
   const c = size / n;
   let i = 0;
-  const rnd = () => rand(seed + 21, i++);
-  let dents = '';
+  const rnd = () => rand(seed, i++);
+  let caps = '';
   for (let j = 0; j < n; j++) {
     for (let k = 0; k < n; k++) {
       const x = (k + 0.5 + (rnd() - 0.5) * 0.7) * c;
       const y = (j + 0.5 + (rnd() - 0.5) * 0.7) * c;
-      const r = c * (0.72 + rnd() * 0.38);
-      const o = (0.65 + rnd() * 0.35).toFixed(2);
+      const r = c * (radius[0] + rnd() * (radius[1] - radius[0]));
+      const o = (heights[0] + rnd() * (heights[1] - heights[0])).toFixed(2);
       for (const ox of [-size, 0, size]) {
         for (const oy of [-size, 0, size]) {
           const cx = x + ox;
           const cy = y + oy;
           if (cx + r < -4 || cy + r < -4 || cx - r > size + 4 || cy - r > size + 4) continue;
-          dents += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="url(#d)" fill-opacity="${o}"/>`;
+          caps += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="url(#d)" fill-opacity="${o}"/>`;
         }
       }
     }
   }
-  const cap = Array.from({ length: 17 }, (_, k) => {
+  const stops = Array.from({ length: 17 }, (_, k) => {
     const p = Math.sin((k / 16) * (Math.PI / 2));
-    const v = Math.round(Math.sqrt(1 - p * p) * 255);
+    const v = Math.round(profile(p) * 255);
     return `<stop offset="${p.toFixed(3)}" stop-color="rgb(${v} ${v} ${v})"/>`;
   }).join('');
-  return {
-    draw: `<defs><style>circle{mix-blend-mode:lighten}</style><radialGradient id="d">${cap}</radialGradient></defs><rect x="-4" y="-4" width="${size + 8}" height="${size + 8}"/>${dents}`,
-    // The blur hides the steps of the 8-bit gray, which the light would
-    // show as contour lines.
-    filter: '<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1 0 0 0 1"/><feGaussianBlur stdDeviation="0.8"/>',
-  };
+  return `<defs><style>circle{mix-blend-mode:lighten}</style><radialGradient id="d">${stops}</radialGradient></defs><rect x="-4" y="-4" width="${size + 8}" height="${size + 8}"/>${caps}`;
 }
+
+// The blur hides the steps of the 8-bit gray, which the light would show as
+// contour lines.
+const smooth = (d) => `<feGaussianBlur stdDeviation="${d}"/>`;
+
+// Hammered dents: spherical caps pressed into the surface (white is deepest).
+const dentHeight = (seed) => ({
+  draw: capField(seed + 21, 6, [0.72, 1.1], [0.65, 1], (p) => Math.sqrt(1 - p * p)),
+  filter: `<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1 0 0 0 1"/>${smooth(0.8)}`,
+});
+
+// Leather grain: flat-topped pebbles with narrow valleys between them.
+const pebbleHeight = (seed) => ({
+  draw: capField(seed + 23, 9, [1, 1.3], [0.75, 1], (p) => (1 - p * p) ** 0.5),
+  filter: `<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0"/>${smooth(1.4)}`,
+});
+
+// Creases: grooves where a coarse noise crosses its middle value. On their
+// own, larger tile, so the pebbles' repeat does not show.
+const creaseHeight = (seed) => ({
+  filter: `<feTurbulence x="0" y="0" width="128" height="128" type="fractalNoise" baseFrequency="${5 / 128}" numOctaves="3" seed="${ns(92, seed)}" stitchTiles="stitch"/>`
+    + '<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0"/>'
+    + `<feComponentTransfer><feFuncA type="table" tableValues="${Array.from({ length: 41 }, (_, k) => [0.6, 0.72, 0.86, 0.96][Math.abs(k - 20)] ?? 1).join(' ')}"/></feComponentTransfer>`,
+  tile: true,
+});
 
 // Isotropic noise tiles, keyed by everything that shapes them.
 const tile = (name, seed, size, period, octaves, base, k, t) =>
@@ -677,15 +709,7 @@ const TEXTURES = {
         { fit: true, css: `box-shadow:inset 0 0 5px 1px ${lighter(50)}`, blend: 'screen', opacity: fade },
       );
     }
-    if (st.stitching) {
-      const m = stitchMask(shape, 2.6);
-      const sx = num(-light.x * 0.3);
-      const sy = num(-light.y * 0.3);
-      layers.push(
-        { fit: true, color: darker(55), css: `mask-image:${m};mask-size:100% 100%;translate:${sx}px ${sy}px`, opacity: 0.6 },
-        { fit: true, color: st.accent, css: `mask-image:${m};mask-size:100% 100%` },
-      );
-    }
+    if (st.stitching) layers.push(...stitchLayers(shape, st, light));
     return layers;
   },
   // Plain weave: each thread over one and under the next, rounded like a
@@ -729,6 +753,27 @@ const TEXTURES = {
       { fit: true, bg: `linear-gradient(${a}deg, ${lighter(40)} 0%, transparent 40%, transparent 65%, ${darker(35)} 100%)`, blend: 'soft-light' },
       { image: relief(`hammered:${st.seed}`, 128, () => dentHeight(st.seed), depth, reliefLight(light, scene), spec), size: 48, blend: 'hard-light', turn: false },
     ];
+  },
+  // Grained leather: pebbles and creases lit by the scene light, a slightly
+  // uneven dye, and edges burnished darker. Waxed leather (satin, glossy)
+  // has a broad soft sheen toward the light and a weak highlight on each
+  // pebble.
+  leather: (st, light, shape, scene) => {
+    const spec = { satin: { exp: 10, k: 0.4 }, gloss: { exp: 20, k: 0.8 } }[st.finish];
+    const depth = (0.6 + 3 * st.texAmount) * st.grain;
+    const rl = reliefLight(light, scene);
+    const layers = [
+      { mask: tile('le-mottle', st.seed, 256, 3, 4, 91, 1.6, 0.42), size: 110, color: darker(18), blend: 'multiply', opacity: 0.6, turn: false },
+      { image: relief(`leather:${st.seed}`, 128, () => pebbleHeight(st.seed), depth, rl, spec), size: 32, blend: 'hard-light', turn: false },
+      { image: relief(`crease:${st.seed}`, 128, () => creaseHeight(st.seed), depth * 0.12, rl), size: 110, blend: 'hard-light', turn: false },
+      { fit: true, css: `box-shadow:inset 0 0 4px 0.8px ${darker(35)}`, opacity: 0.7 },
+    ];
+    if (spec) {
+      const at = `${num(50 + light.x * 22)}% ${num(50 + light.y * 22)}%`;
+      layers.push({ fit: true, bg: `radial-gradient(ellipse 70% 55% at ${at}, rgb(255 255 255 / ${st.finish === 'gloss' ? 0.24 : 0.12}) 0%, transparent 100%)`, blend: 'screen' });
+    }
+    if (st.stitching) layers.push(...stitchLayers(shape, st, light));
+    return layers;
   },
   chrome: (st) => metalLayers(st),
   gold: (st) => metalLayers(st),

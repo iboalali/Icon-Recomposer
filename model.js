@@ -42,6 +42,7 @@ export const MATERIALS = [
   { id: 'concrete', label: 'Concrete', group: 'Stone' },
   { id: 'wood', label: 'Wood', group: 'Natural' },
   { id: 'cork', label: 'Cork', group: 'Natural' },
+  { id: 'leather', label: 'Leather', group: 'Natural' },
   { id: 'paper', label: 'Paper', group: 'Natural' },
   { id: 'cardboard', label: 'Cardboard', group: 'Natural' },
   { id: 'denim', label: 'Denim', group: 'Fabric' },
@@ -158,11 +159,12 @@ const MATERIAL_DEFAULTS = {
   denim: { texAmount: 0.35, stitching: true, accent: '#d9a13b' },
   canvas: { texAmount: 0.6 },
   hammered: { finish: 'gloss' },
+  leather: { stitching: true, accent: '#e9e3d6' },
 };
 
 // Materials whose pattern Shuffle can change. Seed 0 is each pattern's
 // original layout.
-const SHUFFLED = new Set(['brushed', 'brushed-round', 'blasted', 'anodized', 'wood', 'marble', 'granite', 'terrazzo', 'slate', 'concrete', 'cork', 'paper', 'cardboard', 'denim', 'canvas', 'felt', 'ceramic', 'hammered']);
+const SHUFFLED = new Set(['brushed', 'brushed-round', 'blasted', 'anodized', 'wood', 'marble', 'granite', 'terrazzo', 'slate', 'concrete', 'cork', 'paper', 'cardboard', 'denim', 'canvas', 'felt', 'ceramic', 'hammered', 'leather']);
 export function shuffles(st) {
   if (st.material === 'holographic') return st.holoPattern === 'glitter';
   if (st.material === 'chrome' || st.material === 'gold') return st.metalFinish !== 'polished';
