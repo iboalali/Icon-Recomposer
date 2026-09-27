@@ -463,13 +463,13 @@ function holeMarkup(shape, hole, geo, vars, amb) {
   return `<div class="ir-hole${cls}" style="${geo}${vars}">${inner}</div>`;
 }
 
-// extra: CSS appended to the element and its glow, e.g. a crossing clip-path.
-// holeExtra: the same for the hole wrapper.
+// keep: the region (see meet) the element and its glow are clipped to, e.g. by
+// a crossing. holeKeep: the same for the hole wrapper.
 // plain: without texture layers.
 // pass: 'all', or for a shape sharing a level with its neighbors 'shadow'
 // (its shadows and glow) and 'face' (its body), drawn in separate rounds.
 // overlap: the crossing seam overlap, in canvas units.
-function shapeMarkup(shape, scene, { extra = '', holeExtra = extra, plain = false, pass = 'all', overlap = 0.3 } = {}) {
+function shapeMarkup(shape, scene, { keep = null, holeKeep = keep, plain = false, pass = 'all', overlap = 0.3 } = {}) {
   const st = shape.style;
   const classes = ['ir-shape', 'ambient'];
   const neon = st.material === 'neon';
@@ -504,10 +504,17 @@ function shapeMarkup(shape, scene, { extra = '', holeExtra = extra, plain = fals
     `--amb-grain-amount:${num(st.grain)}`,
   ].join(';') + metalVars(shape, amb);
   const look = vars + metal + (walled ? ';background-image:none' : '');
-  const geo = geometryCss(shape) + extra;
+  const geo = geometryCss(shape) + (keep ? regionClip(shape, keep) : '');
   const opacity = st.opacity < 1 ? `opacity:${num(st.opacity)};` : '';
-  const cut = cutCss(shape, hole, pass, overlap);
-  const body = `<div class="${classes.join(' ')}" style="${geo}${opacity}${look}`;
+  let cut = cutCss(shape, hole, pass, overlap);
+  let face = geo;
+  // Chrome ignores the mask of an element with a backdrop-filter and a
+  // clip-path, so a clipped pane's clip also cuts what its mask would.
+  if (keep && amb === 'glass' && cut) {
+    face = geometryCss(shape) + regionClip(shape, maskedKeep(shape, keep, hole, pass, overlap));
+    cut = '';
+  }
+  const body = `<div class="${classes.join(' ')}" style="${face}${opacity}${look}`;
   if (pass === 'face') {
     if (neon) return `${body};box-shadow:none;${cut}">${hole ? neonWallFace(shape, hole) : neonFace(shape)}</div>`;
     return `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain, amb, walled)}</div>`;
@@ -520,7 +527,7 @@ function shapeMarkup(shape, scene, { extra = '', holeExtra = extra, plain = fals
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
   if (!plain) out += underlayMarkup(shape, scene, geo, hole ? cutCss(shape, hole, 'all', overlap) : '');
-  if (hole) out += holeMarkup(shape, hole, geometryCss(shape) + holeExtra + opacity, vars, amb);
+  if (hole) out += holeMarkup(shape, hole, geometryCss(shape) + (holeKeep ? regionClip(shape, holeKeep) : '') + opacity, vars, amb);
   if (neon) {
     if (pass !== 'shadow') out += `${body};box-shadow:none;${cut}">${hole ? neonWallFace(shape, hole) : neonFace(shape)}</div>`;
     return out;
@@ -676,11 +683,7 @@ const ring = (pts) => `M${pts.map(([x, y]) => `${num(x)} ${num(y)}`).join('L')}Z
 // Through a hollow shape's hole, the shape on the other side shows as it would
 // with no crossing, except that a hollow `under` casts no hole shadow on `over`.
 function overCopy(over, under, scene, overlap) {
-  const hole = holeShape(under);
-  const clip = hole
-    ? `clip-path:path(evenodd,'${ring(toBox(over, outline(under)))}${ring(toBox(over, outline(hole)))}');`
-    : clipCss(toBox(over, outline(under)));
-  return shapeMarkup(over, scene, { extra: clip, overlap });
+  return shapeMarkup(over, scene, { keep: solid(under, 0), overlap });
 }
 
 // Regions are lists of convex polygons that combine by the even-odd rule, so
@@ -701,17 +704,26 @@ function solid(shape, d) {
   return hole ? minus(out, [insetPolygon(outline(hole), d)]) : out;
 }
 
+const regionClip = (shape, r) => `clip-path:path(evenodd,'${r.map((p) => ring(toBox(shape, p))).join('')}');`;
+
+// keep, narrowed to what cutCss's mask leaves of the pass.
+function maskedKeep(shape, keep, hole, pass, overlap) {
+  if (pass === 'face') return meet(keep, solid(shape, 0));
+  if (pass === 'shadow') return minus(keep, [insetPolygon(outline(shape), overlap)]);
+  return minus(keep, [outline(hole)]);
+}
+
 // Holes are inset by `overlap` canvas units (about 1.25 output pixels) so that
 // the shape on the other side of a hole edge still paints across it. Two
 // anti-aliased edges meeting exactly would let the background show through as
 // a hairline.
 // holes: { over: shapes drawn over this one, under: shapes this one is drawn over }
-// Returns the clip for the shape and the one for its hole wrapper, which also
-// leaves out the shapes over it inside its hole, so its hole shadow and glow
-// don't land on them.
+// Returns the region the shape keeps and the one its hole wrapper keeps, which
+// also leaves out the shapes over it inside its hole, so its hole shadow and
+// glow don't land on them.
 function crossingClip(shape, holes, overlap) {
   const pad = inkReach(shape);
-  const box = ring([[-pad, -pad], [shape.w + pad, -pad], [shape.w + pad, shape.h + pad], [-pad, shape.h + pad]]);
+  const box = [outline(shape, pad)];
   const own = [outline(shape)];
   const hole = holeShape(shape);
   let cut = [];
@@ -725,8 +737,7 @@ function crossingClip(shape, holes, overlap) {
     const shared = clipPolygon(outline(shape), outline(under));
     if (shared.length > 2) cut = join(cut, meet([insetPolygon(shared, overlap)], solid(under, -overlap)));
   }
-  const css = (r) => `clip-path:path(evenodd,'${box}${r.map((p) => ring(toBox(shape, p))).join('')}');`;
-  return { clip: css(cut), hole: inHole.length ? css(join(cut, inHole)) : css(cut) };
+  return { keep: minus(box, cut), holeKeep: minus(box, join(cut, inHole)) };
 }
 
 // Reflections of `sources` inside `glossy`, as one layer in glossy's frame:
@@ -830,14 +841,14 @@ export function stageMarkup(variant, { layer = 'all', transparent = false, pxPer
   const pieces = ordered.filter(drawn).map((s) => {
     const overs = (patches.get(s.id) || []).sort((a, b) => rank.get(a.id) - rank.get(b.id));
     const unders = coveredBy.get(s.id) || [];
-    const clip = overs.length || unders.length ? crossingClip(s, { over: overs, under: unders }, overlap) : { clip: '', hole: '' };
+    const clip = overs.length || unders.length ? crossingClip(s, { over: overs, under: unders }, overlap) : {};
     const mirror = reflected(s);
     const refl = mirror.length ? reflectionMarkup(s, mirror, sc, overlap, { holes: unders }) : '';
     const copies = overs.map((o) => {
       const m = reflected(o);
       return overCopy(o, s, sc, overlap) + (m.length ? reflectionMarkup(o, m, sc, overlap, { within: s }) : '');
     }).join('');
-    const part = (pass) => shapeMarkup(s, sc, { extra: clip.clip, holeExtra: clip.hole, pass, overlap });
+    const part = (pass) => shapeMarkup(s, sc, { ...clip, pass, overlap });
     return { s, all: () => part('all') + refl + copies, shadow: () => part('shadow'), face: () => part('face') + refl + copies };
   });
   // A run of level shapes in one layer draws every shadow before any face, so
