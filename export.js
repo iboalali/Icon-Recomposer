@@ -95,10 +95,15 @@ function maskPath(mask, size) {
 async function captureSvg(variant, size, region, layer, transparent) {
   const css = (await iconCss()).replaceAll(']]>', ']]]]><![CDATA[>');
   const box = (REGIONS.find((r) => r.id === region) || REGIONS[0]).box;
-  const markup = stageMarkup(variant, { layer, transparent, pxPerUnit: size / box[2] });
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="${box.join(' ')}">`
-    + `<foreignObject x="0" y="0" width="${CANVAS}" height="${CANVAS}">`
-    + `<div xmlns="http://www.w3.org/1999/xhtml"><style><![CDATA[${css}]]></style>${markup}</div>`
+  const ppu = size / box[2];
+  const markup = stageMarkup(variant, { layer, transparent, pxPerUnit: ppu });
+  // Chrome snaps box edges to whole CSS pixels of the foreignObject, which at
+  // one pixel per canvas unit moves a shape at x 44.75 to 45. Zooming the
+  // stage to the output resolution, as the editor does, keeps them in place.
+  const z = Math.max(1, Math.ceil(ppu));
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="${box.map((v) => v * z).join(' ')}">`
+    + `<foreignObject x="0" y="0" width="${CANVAS * z}" height="${CANVAS * z}">`
+    + `<div xmlns="http://www.w3.org/1999/xhtml" style="zoom:${z}"><style><![CDATA[${css}]]></style>${markup}</div>`
     + '</foreignObject></svg>';
 }
 

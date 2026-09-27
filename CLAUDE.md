@@ -52,6 +52,7 @@ Version 2 is a rewrite. The 1.x app (up to tag `v1.8.0`) shares no code or const
 ## Export
 
 - The SVG carries output `width`/`height`; the `viewBox` picks the area (whole canvas or the center 72dp). Masks are applied on the canvas with `destination-in`.
+- The stage inside the foreignObject is zoomed to the output resolution, like the editor frame: at 1 CSS px per unit Chrome snaps box edges to whole units (x 44.75 paints from 45), which masks and clip-paths don't follow.
 - Adaptive-icon layer jobs always use the whole canvas and no mask; the foreground layer is transparent, its shadows stay semi-transparent.
 
 ## UI (`ui.js`)
