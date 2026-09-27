@@ -73,6 +73,8 @@ const BASE_CSS = `
 .ir-rim { box-shadow: ${edgeBands('')}; }
 .ir-rims { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; }
 .ir-hole-glow { position: absolute; }
+.ir-glass-rim { position: absolute; pointer-events: none; }
+.ir-hole-clip { position: absolute; overflow: hidden; }
 .ir-hole.ir-glass .ir-hole-in { --_amb-sh-gain: calc(0.12 + var(--amb-elevation) * 0.12); }
 `;
 
@@ -102,7 +104,7 @@ function adaptAmbient(css) {
     if (!out.includes(from)) console.warn(`ambient.css changed: "${from}" not found`);
     out = out.split(from).join(to);
   }
-  return out + holeShadowCss(css);
+  return out + holeShadowCss(css) + glassHoleCss(css);
 }
 
 // Splits at `sep` outside parentheses.
@@ -140,6 +142,54 @@ function holeShadowCss(css) {
   const drops = splitTop(shadow.replace(/^\s*box-shadow\s*:/, ''), ',').map((l) => l.trim()).filter((l) => !l.startsWith('inset'));
   const vars = decls.filter((d) => /^\s*--/.test(d)).join(';');
   return `\n.ir-hole-in { position: absolute; --amb-elevation: inherit; ${vars}; box-shadow: ${drops.map((l) => `inset ${l}`).join(', ')}; }\n`;
+}
+
+// The declarations of the first top-level rule for `selector` whose body
+// contains `marker`, without comments.
+function ruleDecls(css, selector, marker) {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const m of css.matchAll(new RegExp(`\\n${esc} \\{([\\s\\S]*?)\\n\\}`, 'g'))) {
+    const body = m[1].replace(/\/\*[\s\S]*?\*\//g, '');
+    if (body.includes(marker)) return splitTop(body, ';').map((d) => d.trim()).filter(Boolean);
+  }
+  return null;
+}
+
+// A frosted glass frame's walls around the hole: the shadow ring and skirt
+// ambient.css draws for a pane's outer walls (.amb-mat-glass::after), drawn
+// again for the hole's walls in the hole's wrapper. The ring lies just outside
+// the hole's box, so its inset shadow, the skirt, fills the hole's box and is
+// blurred with it. It is clipped to the hole: past it, the ring would lie
+// under the pane as a hard line along the wall. The wrapper is not the
+// glass element, so it computes ambient.css's private --_glass-* variables
+// itself, from the same declarations.
+function glassHoleCss(css) {
+  const decls = ruleDecls(css, '.amb-mat-glass', '--_glass-skirt-a');
+  if (!decls) {
+    console.warn('ambient.css changed: the .amb-mat-glass variables were not found');
+    return '';
+  }
+  const vars = decls.filter((d) => d.startsWith('--_glass-')).join(';\n  ');
+  // Per side, as for a pane's walls, but the hole's left edge is the wall
+  // right of it in the frame: the one whose shadow falls into the hole.
+  const side = (edge, s) => `border-${edge}-color: hsl(var(--amb-light-hue) var(--amb-light-saturation) 0% / calc(var(--_glass-ring-a) * (max(0, -1 * var(--_glass-s-${s})) + (1 - max(0, -1 * var(--_glass-s-${s}))) * var(--_glass-ring-lift))));`;
+  return `
+.ir-hole.ir-glass {
+  ${vars};
+}
+.ir-hole-ring {
+  position: absolute;
+  translate: var(--_glass-sh-x) var(--_glass-sh-y);
+  border-style: solid;
+  border-width: var(--_glass-ring-w);
+  ${side('left', 'right')}
+  ${side('right', 'left')}
+  ${side('top', 'bottom')}
+  ${side('bottom', 'top')}
+  box-shadow: inset 0 0 var(--_glass-skirt-blur) 0 hsl(var(--amb-light-hue) var(--amb-light-saturation) 0% / var(--_glass-skirt-a));
+  filter: blur(var(--_glass-ring-blur));
+}
+`;
 }
 
 let cssPromise = null;
@@ -255,10 +305,18 @@ function holeMarkup(shape, hole, geo, vars, amb) {
     glow = `inset 0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}`;
   }
   let inner = neon ? '' : `<div class="ir-hole-in" style="${box}"></div>`;
+  if (amb === 'glass') {
+    const edge = 'calc(var(--_glass-ring-w) * -1)';
+    const size = (v) => `calc(${num(v)}px + var(--_glass-ring-w) * 2)`;
+    const radius = shape.kind === 'ellipse' ? '50%' : `calc(${num(hole.radius)}px + var(--_glass-ring-w))`;
+    const ring = `<div class="ir-hole-ring" style="left:${edge};top:${edge};width:${size(hole.w)};height:${size(hole.h)};border-radius:${radius}"></div>`;
+    inner += `<div class="ir-hole-clip" style="${box}">${ring}</div>`;
+  }
   if (glow) inner += `<div class="ir-hole-glow" style="${box}box-shadow:${glow}"></div>`;
   inner += holeFuzz(shape, hole);
   if (!inner) return '';
-  return `<div class="ir-hole${amb === 'glass' ? ' ir-glass' : ''}" style="${geo}${vars}">${inner}</div>`;
+  const cls = amb !== 'glass' ? '' : st.material === 'jelly' ? ' ir-glass ir-jelly' : ' ir-glass';
+  return `<div class="ir-hole${cls}" style="${geo}${vars}">${inner}</div>`;
 }
 
 // extra: CSS appended to the element and its glow, e.g. a crossing clip-path.
@@ -303,7 +361,7 @@ function shapeMarkup(shape, scene, { extra = '', plain = false, pass = 'all', ov
   const body = `<div class="${classes.join(' ')}" style="${geo}${opacity}${look}`;
   if (pass === 'face') {
     if (neon) return `${body};box-shadow:none;${cut}">${neonFace(shape)}</div>`;
-    return `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain)}</div>`;
+    return `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain, amb)}</div>`;
   }
   let out = '';
   if (neon && st.glowSize > 0) {
@@ -318,17 +376,31 @@ function shapeMarkup(shape, scene, { extra = '', plain = false, pass = 'all', ov
     if (pass !== 'shadow') out += `${body};box-shadow:none;${cut}">${neonFace(shape)}</div>`;
     return out;
   }
-  out += `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain)}</div>`;
+  out += `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain, amb)}</div>`;
   return out;
 }
 
-function innerMarkup(shape, scene, light, hole, plain) {
+// A glass frame's edge bands along its hole, like the ones ambient.css paints
+// inside a pane's edges: the hole's outline shadow moved toward the light is
+// the glow on the far walls, moved away from it the wash on the walls facing
+// the light. The shadow follows the hole's corners and thins out toward the
+// walls parallel to the light, as the pane's bands do per side.
+function glassRim(shape, hole, light) {
+  const hsl = (l, a) => `hsl(var(--amb-light-hue) var(--amb-light-saturation) ${l}% / ${a})`;
+  const by = (w, k) => `calc(var(--_glass-${w}-w) * ${num(light.x * k)}) calc(var(--_glass-${w}-w) * ${num(light.y * k)})`;
+  const glow = `${by('glow', 0.5)} 1.5px 0 ${hsl(100, 'calc(var(--_glass-far-a) * 0.8)')}`;
+  const wash = `${by('band', -0.6)} 2px 0 ${hsl(53, 'var(--_glass-lit-a)')}`;
+  return `<div class="ir-glass-rim" style="${holeBox(shape, hole)}box-shadow:${glow},${wash}"></div>`;
+}
+
+function innerMarkup(shape, scene, light, hole, plain, amb) {
   const st = shape.style;
   let edge = '';
   if (st.chamfer || st.fillet) {
     edge = '<div class="ir-edge"></div>';
     if (hole) edge += `<div class="ir-rims"><div class="ir-rim" style="${holeBox(shape, hole)}"></div></div>`;
   }
+  if (hole && amb === 'glass') edge = glassRim(shape, hole, light) + edge;
   const tex = plain ? '' : textureMarkup(shape, light, scene);
   return coversEdge(st) ? edge + tex : tex + edge;
 }

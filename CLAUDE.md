@@ -51,6 +51,7 @@ Version 2 is a rewrite. The 1.x app (up to tag `v1.8.0`) shares no code or const
 - Frosted glass overrides ambient.css's private `--_glass-*` variables from `.ir-shape.amb-mat-glass`.
 - **Holes** are an even-odd SVG `mask-image` with `mask-clip: no-clip` (padded by `inkReach` so the drop shadow survives), never a clip-path, so they combine with crossing clip-paths. The shadow into the hole is `.ir-hole-in`, generated from the `.ambient` rule's drop layers made `inset` (`holeShadowCss`); the hole's rim is `.ir-rim`, the edge bands without `inset`. Only custom properties go on the hole wrapper: `metalSurface` also sets `background`.
 - ambient.css registers `--amb-elevation` with `inherits: false`. That rule takes effect in the export's SVG document but not in the editor's shadow root, so a child element that reads elevation must set it (`--amb-elevation: inherit`) or preview and export differ.
+- A hollow shape's glass edge and shadow ring around the hole live in the hole wrapper, which recomputes ambient.css's private `--_glass-*` variables from the `.amb-mat-glass` rule (`glassHoleCss`).
 - **Level runs** draw each shape twice without painting anything twice: a `shadow` pass masked to outside the outline (inset by the seam overlap), then a `face` pass masked to the outline.
 - Mask SVGs are drawn at the output resolution (`maskUrl`): the export rasterizes a mask image at its own size.
 

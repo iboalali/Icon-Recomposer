@@ -1308,8 +1308,8 @@ export const TEXTURE_CSS = `
   pointer-events: none;
 }
 /* A jelly's own colored shadow (underlayMarkup) replaces most of the glass's
-   gray one. */
-.ir-shape.ir-jelly.amb-mat-glass {
+   gray one, also around a hole. */
+.ir-shape.ir-jelly.amb-mat-glass, .ir-hole.ir-glass.ir-jelly {
   --_glass-ring-a: calc((0.2 + var(--amb-elevation) * 0.04) * var(--_glass-body) * 0.4);
   --_glass-skirt-a: calc(var(--_glass-body) * var(--_glass-ring-lift) * (0.12 + min(var(--amb-elevation), 2) * 0.12) * 0.4);
 }
