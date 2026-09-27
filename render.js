@@ -680,11 +680,24 @@ const ring = (pts) => `M${pts.map(([x, y]) => `${num(x)} ${num(y)}`).join('L')}Z
 //   overlap;
 // - the original `over` gets a hole where they overlap, which the copy covers.
 // Shapes that paint after `under` still cover all of it.
+// Along `under`'s edge, a band `overlap` wide is painted by both. An opaque
+// `over` puts it outside `under`: the copy reaches past the edge and covers
+// its anti-aliased pixels, which would otherwise show `under`'s rim as a line.
+// A see-through `over` puts it inside, where `under` hides the original and
+// the band isn't seen twice. Shadows and glows are see-through, so the copy's
+// stop at `under`'s outline: past it they would land on the original faces
+// where the copy's face only partly covers them, and show as a dark line.
 // Through a hollow shape's hole, the shape on the other side shows as it would
 // with no crossing, except that a hollow `under` casts no hole shadow on `over`.
-function overCopy(over, under, scene, overlap) {
-  return shapeMarkup(over, scene, { keep: solid(under, 0), overlap });
+function overCopy(over, under, scene, overlap, pass = 'all') {
+  const grow = seeThrough(over) ? 0 : overlap;
+  const part = (p, d) => shapeMarkup(over, scene, { keep: solid(under, d), holeKeep: solid(under, 0), pass: p, overlap });
+  if (pass === 'face') return part('face', grow);
+  if (pass === 'shadow' || !grow) return part(pass, 0);
+  return part('shadow', 0) + part('face', grow);
 }
+
+const seeThrough = (shape) => shape.style.opacity < 1 || (isTextured(shape.style.material) ? ambientMaterial(shape.style) : shape.style.material) === 'glass';
 
 // Regions are lists of convex polygons that combine by the even-odd rule, so
 // that overlapping cutouts can be merged with clipPolygon alone:
@@ -713,10 +726,11 @@ function maskedKeep(shape, keep, hole, pass, overlap) {
   return minus(keep, [outline(hole)]);
 }
 
-// Holes are inset by `overlap` canvas units (about 1.25 output pixels) so that
-// the shape on the other side of a hole edge still paints across it. Two
-// anti-aliased edges meeting exactly would let the background show through as
-// a hairline.
+// Along every cut edge, `overlap` canvas units (about 1.25 output pixels) are
+// painted from both sides: the cutouts for shapes over this one are inset by
+// it, and so are those for shapes this one crosses over, unless a copy of this
+// shape reaches past their edge instead (overCopy). Two anti-aliased edges
+// meeting exactly would let the background show through as a hairline.
 // holes: { over: shapes drawn over this one, under: shapes this one is drawn over }
 // Returns the region the shape keeps and the one its hole wrapper keeps, which
 // also leaves out the shapes over it inside its hole, so its hole shadow and
@@ -735,7 +749,9 @@ function crossingClip(shape, holes, overlap) {
   }
   for (const under of holes.under) {
     const shared = clipPolygon(outline(shape), outline(under));
-    if (shared.length > 2) cut = join(cut, meet([insetPolygon(shared, overlap)], solid(under, -overlap)));
+    if (shared.length <= 2) continue;
+    const inset = seeThrough(shape) ? overlap : 0;
+    cut = join(cut, meet([insetPolygon(shared, inset)], solid(under, -inset)));
   }
   return { keep: minus(box, cut), holeKeep: minus(box, join(cut, inHole)) };
 }
@@ -838,30 +854,44 @@ export function stageMarkup(variant, { layer = 'all', transparent = false, pxPer
     if (!coveredBy.has(over.id)) coveredBy.set(over.id, []);
     coveredBy.get(over.id).push(under);
   }
-  const pieces = ordered.filter(drawn).map((s) => {
+  // A run of level shapes in one layer draws every shadow before any face, so
+  // no shadow lands on a face of the run. Copies of them over one shape do the
+  // same.
+  const runOf = new Map();
+  const list = ordered.filter(drawn);
+  for (let i = 0; i < list.length;) {
+    let j = i + 1;
+    if (list[i].level) {
+      while (j < list.length && list[j].level && list[j].layer === list[i].layer) j++;
+    }
+    if (j - i > 1) for (let k = i; k < j; k++) runOf.set(list[k].id, i);
+    i = j;
+  }
+  const groups = (items, shapeOf) => {
+    const out = [];
+    for (const it of items) {
+      const run = runOf.get(shapeOf(it).id);
+      const last = out[out.length - 1];
+      if (run !== undefined && last && runOf.get(shapeOf(last[0]).id) === run) last.push(it);
+      else out.push([it]);
+    }
+    return out;
+  };
+  const leveled = (group, shadow, face, all) => (group.length > 1 ? group.map(shadow).join('') + group.map(face).join('') : all(group[0]));
+  const pieces = list.map((s) => {
     const overs = (patches.get(s.id) || []).sort((a, b) => rank.get(a.id) - rank.get(b.id));
     const unders = coveredBy.get(s.id) || [];
     const clip = overs.length || unders.length ? crossingClip(s, { over: overs, under: unders }, overlap) : {};
     const mirror = reflected(s);
     const refl = mirror.length ? reflectionMarkup(s, mirror, sc, overlap, { holes: unders }) : '';
-    const copies = overs.map((o) => {
-      const m = reflected(o);
-      return overCopy(o, s, sc, overlap) + (m.length ? reflectionMarkup(o, m, sc, overlap, { within: s }) : '');
-    }).join('');
+    const copy = (pass) => (o) => {
+      const m = pass !== 'shadow' && reflected(o);
+      return overCopy(o, s, sc, overlap, pass) + (m && m.length ? reflectionMarkup(o, m, sc, overlap, { within: s }) : '');
+    };
+    const copies = groups(overs, (o) => o).map((g) => leveled(g, copy('shadow'), copy('face'), copy('all'))).join('');
     const part = (pass) => shapeMarkup(s, sc, { ...clip, pass, overlap });
     return { s, all: () => part('all') + refl + copies, shadow: () => part('shadow'), face: () => part('face') + refl + copies };
   });
-  // A run of level shapes in one layer draws every shadow before any face, so
-  // no shadow lands on a face of the run.
-  let shapes = '';
-  for (let i = 0; i < pieces.length;) {
-    let j = i + 1;
-    if (pieces[i].s.level) {
-      while (j < pieces.length && pieces[j].s.level && pieces[j].s.layer === pieces[i].s.layer) j++;
-    }
-    const run = pieces.slice(i, j);
-    shapes += run.length > 1 ? run.map((p) => p.shadow()).join('') + run.map((p) => p.face()).join('') : run[0].all();
-    i = j;
-  }
+  const shapes = groups(pieces, (p) => p.s).map((g) => leveled(g, (p) => p.shadow(), (p) => p.face(), (p) => p.all())).join('');
   return `<div class="ir-stage" style="${style}">${shapes}</div>`;
 }
