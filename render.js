@@ -125,6 +125,9 @@ function splitTop(str, sep) {
 // The shadow a hollow shape casts into its hole: the .ambient rule's drop
 // shadow layers, made inset on the hole's box. An inset shadow is the box's
 // outside moved by the offset, which is where the walls around the hole cast.
+// ambient.css registers --amb-elevation as not inherited, which takes effect
+// in the export's document but not in the editor's shadow root, so the rule
+// inherits it explicitly.
 function holeShadowCss(css) {
   const block = /\n\.ambient \{([\s\S]*?)\n\}/.exec(css);
   const body = block ? block[1].replace(/\/\*[\s\S]*?\*\//g, '') : '';
@@ -136,7 +139,7 @@ function holeShadowCss(css) {
   }
   const drops = splitTop(shadow.replace(/^\s*box-shadow\s*:/, ''), ',').map((l) => l.trim()).filter((l) => !l.startsWith('inset'));
   const vars = decls.filter((d) => /^\s*--/.test(d)).join(';');
-  return `\n.ir-hole-in { position: absolute; ${vars}; box-shadow: ${drops.map((l) => `inset ${l}`).join(', ')}; }\n`;
+  return `\n.ir-hole-in { position: absolute; --amb-elevation: inherit; ${vars}; box-shadow: ${drops.map((l) => `inset ${l}`).join(', ')}; }\n`;
 }
 
 let cssPromise = null;
