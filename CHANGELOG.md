@@ -9,7 +9,9 @@ into saved project files.
 
 ## [Unreleased]
 
-Version 2 is a complete rewrite. Icon Recomposer is now an editor for lit, layered app icons: you build an icon from shapes, give each one a material under one scene light, keep several variants side by side, and export them as PNG for Android and the Play Store.
+## [2.0.0-beta1] - 2026-09-27
+
+The first beta of version 2, a complete rewrite. Icon Recomposer is now an editor for lit, layered app icons: you build an icon from shapes, give each one a material under one scene light, keep several variants side by side, and export them as PNG for Android and the Play Store.
 
 ### Added
 
@@ -43,7 +45,7 @@ Version 2 is a complete rewrite. Icon Recomposer is now an editor for lit, layer
 
 ### Removed
 
-- VectorDrawable and SVG export, SVG and VectorDrawable import, gradient emboss layers, and the animation timeline from 1.x.
+- VectorDrawable and SVG export, SVG and VectorDrawable import, and gradient emboss layers from 1.x.
 - Offline use and installing as an app. Visitors who installed 1.x are moved to the new version automatically.
 - 1.x project files can no longer be opened.
 
