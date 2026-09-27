@@ -309,7 +309,7 @@ function shapeMarkup(shape, scene, { extra = '', plain = false, pass = 'all', ov
   } else if (st.glow && st.glowSize > 0) {
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
-  if (!plain) out += underlayMarkup(shape, scene, geo + (hole ? cutCss(shape, hole, 'all', overlap) : ''));
+  if (!plain) out += underlayMarkup(shape, scene, geo, hole ? cutCss(shape, hole, 'all', overlap) : '');
   if (hole) out += holeMarkup(shape, hole, geo + opacity, vars, amb);
   if (neon) {
     if (pass !== 'shadow') out += `${body};box-shadow:none;${cut}">${neonFace(shape)}</div>`;

@@ -1205,13 +1205,18 @@ function feltFuzz(shape) {
 }
 
 // Drawn right under the shape, in its geometry (geo): the colored light a
-// jelly lets through, falling away from the scene light.
-export function underlayMarkup(shape, scene, geo) {
+// jelly lets through, falling away from the scene light. cut: the hollow
+// shape's hole mask, on a wrapper, because Chrome clips a blurred element
+// that also has a mask to its own box.
+export function underlayMarkup(shape, scene, geo, cut = '') {
   const st = shape.style;
   if (st.material === 'jelly') {
     const e = st.elevation * 3 + st.thickness * 2.5;
     const o = st.opacity * (0.2 + 0.25 * st.texAmount);
-    return `<div class="ir-halo" style="${geo}background:color-mix(in oklab, ${st.color}, black 10%);translate:${num(-scene.lightX * e)}px ${num(-scene.lightY * e)}px;filter:blur(${num(2 + e * 0.5)}px);opacity:${num(o)}"></div>`;
+    const light = `background:color-mix(in oklab, ${st.color}, black 10%);filter:blur(${num(2 + e * 0.5)}px);opacity:${num(o)}`;
+    const shift = `translate:${num(-scene.lightX * e)}px ${num(-scene.lightY * e)}px;`;
+    if (!cut) return `<div class="ir-halo" style="${geo}${shift}${light}"></div>`;
+    return `<div class="ir-halo" style="${geo}${shift}${cut}"><div class="ir-halo" style="inset:0;border-radius:inherit;${light}"></div></div>`;
   }
   return '';
 }
