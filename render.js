@@ -7,7 +7,7 @@
 // The markup is XHTML-safe: it is parsed as XML inside the capture SVG.
 
 import { CANVAS, holeShape, isOver, paintOrder, shapesOverlap } from './model.js';
-import { TEXTURE_CSS, ambientMaterial, coversEdge, isTextured, metalSurface, metalVars, neonFace, reflectivity, textureMarkup, underlayMarkup } from './textures.js';
+import { TEXTURE_CSS, ambientMaterial, coversEdge, holeFuzz, isTextured, metalSurface, metalVars, neonFace, reflectivity, textureMarkup, underlayMarkup } from './textures.js';
 
 const AMBIENT_URL = new URL('./vendor/ambientcss/ambient.css', import.meta.url);
 
@@ -256,6 +256,7 @@ function holeMarkup(shape, hole, geo, vars, amb) {
   }
   let inner = neon ? '' : `<div class="ir-hole-in" style="${box}"></div>`;
   if (glow) inner += `<div class="ir-hole-glow" style="${box}box-shadow:${glow}"></div>`;
+  inner += holeFuzz(shape, hole);
   if (!inner) return '';
   return `<div class="ir-hole${amb === 'glass' ? ' ir-glass' : ''}" style="${geo}${vars}">${inner}</div>`;
 }

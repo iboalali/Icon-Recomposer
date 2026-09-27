@@ -16,6 +16,8 @@
 // editor show it several times larger, so textures carry detail down to about
 // a quarter of a unit; coarser noise reads as a blurry, upscaled image.
 
+import { holeShape } from './model.js';
+
 const num = (n) => +(+n).toFixed(3);
 
 // A repeatable pseudo-random number in 0..1 for a seed and an index.
@@ -821,14 +823,19 @@ const TEXTURES = {
   // Felt: a dense mat of short fibers in every direction, no weave. The
   // fibers at the outline catch the light, and a few stick out past it
   // (feltFuzz), so the edge reads soft.
-  felt: (st) => {
+  felt: (st, light, shape) => {
     const g = Math.min(1, st.grain);
+    const hole = holeShape(shape);
+    const holeRim = hole
+      ? [{ fit: true, inset: shape.wall, css: `border-radius:${shape.kind === 'ellipse' ? '50%' : `${num(hole.radius)}px`};box-shadow:0 0 1.4px 0.5px ${lighter(22)}`, opacity: st.fuzz }]
+      : [];
     return [
       { mask: tile('fe-mottle', st.seed, 256, 4, 5, 77, 1.4, 0.4), size: 90, color: darker(14), blend: 'multiply', opacity: 0.6 * g },
       { mask: fiberMask('fe-dark', st.seed, 1400, [6, 16], 1.1), size: 18, color: darker(24), blend: 'multiply', opacity: 0.55 * g },
       { mask: fiberMask('fe-light', st.seed + 1, 1000, [6, 14], 1.1), size: 18, color: lighter(28), blend: 'screen', opacity: 0.45 * g },
       { mask: tile('fe-fine', st.seed, 256, 180, 1, 78, 3, 0.5), size: 60, color: darker(10), blend: 'multiply', opacity: 0.5 * g },
       { fit: true, css: `box-shadow:inset 0 0 1.4px 0.5px ${lighter(22)}`, opacity: st.fuzz },
+      ...holeRim,
     ];
   },
   // Hammered metal: the shape color as the metal, a broad sheen across it,
@@ -1161,47 +1168,79 @@ export function ambientMaterial(st) {
   return null;
 }
 
+// A box's outline as an SVG subpath, from its top-left corner (x, y).
+function outlineD(kind, x, y, w, h, radius) {
+  if (kind === 'ellipse') {
+    const rx = w / 2;
+    const ry = h / 2;
+    return `M${num(x)} ${num(y + ry)}a${num(rx)} ${num(ry)} 0 1 0 ${num(w)} 0a${num(rx)} ${num(ry)} 0 1 0 ${num(-w)} 0Z`;
+  }
+  const r = Math.max(0, Math.min(radius, w / 2, h / 2));
+  return `M${num(x + r)} ${num(y)}h${num(w - r * 2)}a${num(r)} ${num(r)} 0 0 1 ${num(r)} ${num(r)}v${num(h - r * 2)}a${num(r)} ${num(r)} 0 0 1 ${num(-r)} ${num(r)}h${num(r * 2 - w)}a${num(r)} ${num(r)} 0 0 1 ${num(-r)} ${num(-r)}v${num(r * 2 - h)}a${num(r)} ${num(r)} 0 0 1 ${num(r)} ${num(-r)}Z`;
+}
+
+const bandSvg = (W, H, d) => `<svg xmlns="http://www.w3.org/2000/svg" width="${num(W * 8)}" height="${num(H * 8)}" viewBox="0 0 ${num(W)} ${num(H)}"><path fill-rule="evenodd" d="${d}"/></svg>`;
+
+// Band masks start a little inside the outline they grow from, so no hairline
+// of background shows between the band's anti-aliased edge and the shape's.
+const BAND_SEAM = 0.2;
+
 // The band from a shape's outline out to `d` units past it, as a mask for a
-// box that reaches `d` past the shape on every side. It starts a little
-// inside the outline, so no hairline of background shows between the band's
-// anti-aliased edge and the shape's.
+// box that reaches `d` past the shape on every side.
 function ringMask(shape, d) {
-  const o = 0.2;
-  const w = shape.w - o * 2;
-  const h = shape.h - o * 2;
+  const o = BAND_SEAM;
   return mask(`ring:${shape.kind}:${num(shape.w)}:${num(shape.h)}:${num(shape.radius)}:${num(d)}`, () => {
     const W = shape.w + d * 2;
     const H = shape.h + d * 2;
-    const e = d + o;
-    let inner;
-    if (shape.kind === 'ellipse') {
-      const rx = w / 2;
-      const ry = h / 2;
-      inner = `M${num(e)} ${num(e + ry)}a${num(rx)} ${num(ry)} 0 1 0 ${num(w)} 0a${num(rx)} ${num(ry)} 0 1 0 ${num(-w)} 0Z`;
-    } else {
-      const r = Math.max(0, Math.min(shape.radius - o, w / 2, h / 2));
-      inner = `M${num(e + r)} ${num(e)}h${num(w - r * 2)}a${num(r)} ${num(r)} 0 0 1 ${num(r)} ${num(r)}v${num(h - r * 2)}a${num(r)} ${num(r)} 0 0 1 ${num(-r)} ${num(r)}h${num(r * 2 - w)}a${num(r)} ${num(r)} 0 0 1 ${num(-r)} ${num(-r)}v${num(r * 2 - h)}a${num(r)} ${num(r)} 0 0 1 ${num(r)} ${num(-r)}Z`;
-    }
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${num(W * 8)}" height="${num(H * 8)}" viewBox="0 0 ${num(W)} ${num(H)}"><path fill-rule="evenodd" d="M0 0H${num(W)}V${num(H)}H0Z${inner}"/></svg>`;
+    return bandSvg(W, H, `M0 0H${num(W)}V${num(H)}H0Z${outlineD(shape.kind, d + o, d + o, shape.w - o * 2, shape.h - o * 2, shape.radius - o)}`);
   });
 }
 
-// Felt's stray fibers just past the outline: children of the shape reaching
-// out by up to `f`, masked to the band outside the outline, so they paint
-// over the shape's own drop shadow. Dense right at the outline, sparser
-// further out.
+// The band from a hole's outline in to `d` units inside it, as a mask for the
+// hole's box grown by BAND_SEAM on every side.
+function holeBandMask(hole, d) {
+  const o = BAND_SEAM;
+  return mask(`holeband:${hole.kind}:${num(hole.w)}:${num(hole.h)}:${num(hole.radius)}:${num(d)}`, () => {
+    const W = hole.w + o * 2;
+    const H = hole.h + o * 2;
+    const inner = hole.w > d * 2 && hole.h > d * 2
+      ? outlineD(hole.kind, o + d, o + d, hole.w - d * 2, hole.h - d * 2, hole.radius - d)
+      : '';
+    return bandSvg(W, H, outlineD(hole.kind, 0, 0, W, H, hole.radius + o) + inner);
+  });
+}
+
+// Felt's stray fibers: two layers, dense right at the outline and sparser
+// further out, as [reach, fiber mask, extra css].
+function fuzzLayers(st) {
+  const f = 0.2 + st.fuzz * 0.7;
+  return [
+    [f * 0.6, fiberMask('fe-fuzz', st.seed + 3, 1800, [8, 20], 2.4), 'opacity:0.85'],
+    [f, fiberMask('fe-fuzz2', st.seed + 4, 700, [8, 20], 1.8), 'opacity:0.4'],
+  ];
+}
+
+const fuzzMask = (st, fibers, band) => `mask-image:${fibers}, ${band};mask-size:${num(20 * st.texScale)}px, 100% 100%;mask-repeat:repeat, no-repeat;mask-composite:intersect;`;
+
+// Felt's fibers just past the outline: children of the shape reaching out by
+// up to the fuzz's reach, masked to the band outside the outline, so they
+// paint over the shape's own drop shadow.
 function feltFuzz(shape) {
   const st = shape.style;
-  const f = 0.2 + st.fuzz * 0.7;
-  const size = num(20 * st.texScale);
-  const ring = (d, fibers, css) => {
+  return fuzzLayers(st).map(([d, fibers, css]) => {
     const radius = shape.kind === 'ellipse' ? '50%' : `${num(shape.radius + d)}px`;
-    const band = ringMask(shape, d);
-    const m = `mask-image:${fibers}, ${band};mask-size:${size}px, 100% 100%;mask-repeat:repeat, no-repeat;mask-composite:intersect;`;
-    return `<div class="ir-fuzz" style="inset:${num(-d)}px;border-radius:${radius};${m}${css}"></div>`;
-  };
-  return ring(f * 0.6, fiberMask('fe-fuzz', st.seed + 3, 1800, [8, 20], 2.4), 'opacity:0.85')
-    + ring(f, fiberMask('fe-fuzz2', st.seed + 4, 700, [8, 20], 1.8), 'opacity:0.4');
+    return `<div class="ir-fuzz" style="inset:${num(-d)}px;border-radius:${radius};${fuzzMask(st, fibers, ringMask(shape, d))}${css}"></div>`;
+  }).join('');
+}
+
+// The same fibers reaching into a hollow felt shape's hole, for the hole's
+// wrapper, which the shape's hole mask doesn't cut.
+export function holeFuzz(shape, hole) {
+  const st = shape.style;
+  if (st.material !== 'felt' || !(st.fuzz > 0)) return '';
+  const o = BAND_SEAM;
+  const box = `left:${num(shape.wall - o)}px;top:${num(shape.wall - o)}px;width:${num(hole.w + o * 2)}px;height:${num(hole.h + o * 2)}px;`;
+  return fuzzLayers(st).map(([d, fibers, css]) => `<div class="ir-fuzz" style="${box}${fuzzMask(st, fibers, holeBandMask(hole, d))}${css}"></div>`).join('');
 }
 
 // Drawn right under the shape, in its geometry (geo): the colored light a
