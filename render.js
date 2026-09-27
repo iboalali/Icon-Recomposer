@@ -682,6 +682,24 @@ function overCopy(over, under, scene, overlap) {
   return shapeMarkup(over, scene, { extra: clip, overlap });
 }
 
+// Regions are lists of convex polygons that combine by the even-odd rule, so
+// that overlapping cutouts can be merged with clipPolygon alone:
+// a ∪ b = a ⊕ b ⊕ (a ∩ b), a \ b = a ⊕ (a ∩ b).
+const polyArea = (pts) => Math.abs(pts.reduce((sum, [x, y], i) => {
+  const [nx, ny] = pts[(i + 1) % pts.length];
+  return sum + x * ny - nx * y;
+}, 0)) / 2;
+const meet = (a, b) => a.flatMap((p) => b.map((q) => clipPolygon(p, q))).filter((p) => p.length > 2 && polyArea(p) > 1e-6);
+const join = (a, b) => [...a, ...b, ...meet(a, b)];
+const minus = (a, b) => [...a, ...meet(a, b)];
+
+// A shape's outline without its hole, grown by d.
+function solid(shape, d) {
+  const out = [insetPolygon(outline(shape), -d)];
+  const hole = holeShape(shape);
+  return hole ? minus(out, [insetPolygon(outline(hole), d)]) : out;
+}
+
 // Holes are inset by `overlap` canvas units (about 1.25 output pixels) so that
 // the shape on the other side of a hole edge still paints across it. Two
 // anti-aliased edges meeting exactly would let the background show through as
@@ -689,29 +707,17 @@ function overCopy(over, under, scene, overlap) {
 // holes: { over: shapes drawn over this one, under: shapes this one is drawn over }
 function crossingClip(shape, holes, overlap) {
   const pad = inkReach(shape);
-  let d = ring([[-pad, -pad], [shape.w + pad, -pad], [shape.w + pad, shape.h + pad], [-pad, shape.h + pad]]);
-  // Each ring flips the even-odd parity, so a ring and the part of it inside
-  // the shape's outline together give back the area outside the outline.
-  const flip = (pts) => {
-    d += ring(toBox(shape, pts));
-    const shared = clipPolygon(pts, outline(shape));
-    if (shared.length > 2) d += ring(toBox(shape, shared));
-  };
+  const box = ring([[-pad, -pad], [shape.w + pad, -pad], [shape.w + pad, shape.h + pad], [-pad, shape.h + pad]]);
+  const own = [outline(shape)];
+  let cut = [];
   for (const over of holes.over) {
-    flip(insetPolygon(outline(over), overlap));
-    const oh = holeShape(over);
-    if (oh) flip(insetPolygon(outline(oh), -overlap));
+    cut = join(cut, minus(solid(over, -overlap), own));
   }
   for (const under of holes.under) {
     const shared = clipPolygon(outline(shape), outline(under));
-    if (shared.length <= 2) continue;
-    const cut = insetPolygon(shared, overlap);
-    d += ring(toBox(shape, cut));
-    const uh = holeShape(under);
-    const through = uh ? clipPolygon(insetPolygon(outline(uh), -overlap), cut) : [];
-    if (through.length > 2) d += ring(toBox(shape, through));
+    if (shared.length > 2) cut = join(cut, meet([insetPolygon(shared, overlap)], solid(under, -overlap)));
   }
-  return `clip-path:path(evenodd,'${d}');`;
+  return `clip-path:path(evenodd,'${box}${cut.map((p) => ring(toBox(shape, p))).join('')}');`;
 }
 
 // Reflections of `sources` inside `glossy`, as one layer in glossy's frame:
@@ -741,11 +747,12 @@ function reflectionMarkup(glossy, sources, scene, overlap, { holes = [], within 
     return shapeMarkup(c, scene, { plain: true, overlap });
   }).join('');
   const inner = insetPolygon(outline(glossy), overlap);
-  let d = ring(toBox(glossy, within ? clipPolygon(inner, outline(within)) : inner));
+  let covered = [];
   for (const u of holes) {
     const shared = clipPolygon(outline(glossy), outline(u));
-    if (shared.length > 2) d += ring(toBox(glossy, insetPolygon(shared, overlap)));
+    if (shared.length > 2) covered = join(covered, [insetPolygon(shared, overlap)]);
   }
+  const d = minus([within ? clipPolygon(inner, outline(within)) : inner], covered).map((p) => ring(toBox(glossy, p))).join('');
   const f = num(Math.min(REFLECT_FADE, glossy.w / 4, glossy.h / 4));
   const fade = glossy.kind === 'ellipse'
     ? `radial-gradient(closest-side,#000 calc(100% - ${f}px),transparent)`
