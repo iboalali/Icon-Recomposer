@@ -427,6 +427,10 @@ function renderSelection() {
       o.className = 'sel-outline';
       o.classList.toggle('primary', s.id === state.ui.primary);
       placeBox(o, s, z);
+      const hole = document.createElement('div');
+      hole.className = 'sel-hole';
+      placeHole(hole, s, z);
+      o.append(hole);
       outlines.append(o);
     }
     return;
@@ -438,8 +442,18 @@ function renderSelection() {
   }
   sel.hidden = false;
   placeBox(sel, s, z);
+  placeHole(sel.querySelector('.sel-hole'), s, z);
   for (const h of sel.querySelectorAll('.handle')) {
     const hv = h.dataset.handle;
+    if (hv === 'wall') {
+      const at = wallHandleAt(s);
+      h.hidden = !at;
+      if (at) {
+        h.style.left = `${at.x * z}px`;
+        h.style.top = `${at.y * z}px`;
+      }
+      continue;
+    }
     if (hv === 'rot') {
       h.style.left = '50%';
       h.style.top = '-22px';
@@ -459,6 +473,32 @@ function placeBox(el, s, z) {
   el.style.height = `${s.h * z}px`;
   el.style.transform = s.rotation ? `rotate(${s.rotation}deg)` : '';
   el.style.borderRadius = s.kind === 'ellipse' ? '50%' : `${s.radius * z}px`;
+}
+
+function placeHole(el, s, z) {
+  const hole = M.holeShape(s);
+  el.hidden = !hole;
+  if (!hole) return;
+  el.style.left = `${s.wall * z}px`;
+  el.style.top = `${s.wall * z}px`;
+  el.style.width = `${hole.w * z}px`;
+  el.style.height = `${hole.h * z}px`;
+  el.style.borderRadius = s.kind === 'ellipse' ? '50%' : `${hole.radius * z}px`;
+}
+
+// Where the wall handle sits in the shape's own box: on the hole's outline,
+// toward the bottom-right corner, where it stays clear of the resize handles.
+// k is how far that point moves diagonally per unit of wall.
+function wallHandleAt(s) {
+  const hole = M.holeShape(s);
+  if (!hole) return null;
+  if (s.kind === 'ellipse') {
+    return { x: s.w / 2 + (hole.w / 2) * Math.SQRT1_2, y: s.h / 2 + (hole.h / 2) * Math.SQRT1_2, k: Math.SQRT1_2 };
+  }
+  // A rounded hole's radius shrinks as the wall grows, which moves its corner
+  // back toward the outer corner.
+  const cut = hole.radius * (1 - Math.SQRT1_2);
+  return { x: s.w - s.wall - cut, y: s.h - s.wall - cut, k: hole.radius > 0 ? Math.SQRT1_2 : 1 };
 }
 
 function cursorFor(hx, hy, rotation) {
@@ -531,9 +571,9 @@ function onCanvasDown(e) {
   const additive = e.shiftKey || e.ctrlKey || e.metaKey;
   if (handle && s) {
     const hv = handle.dataset.handle;
-    drag = hv === 'rot'
-      ? { kind: 'rotate', id: s.id }
-      : { kind: 'resize', id: s.id, h: hv.split(',').map(Number), start: p, orig: { ...s } };
+    if (hv === 'rot') drag = { kind: 'rotate', id: s.id };
+    else if (hv === 'wall') drag = { kind: 'wall', id: s.id, start: p, orig: { ...s }, k: wallHandleAt(s).k };
+    else drag = { kind: 'resize', id: s.id, h: hv.split(',').map(Number), start: p, orig: { ...s } };
   } else {
     const hit = hitTest(p);
     if (hit && additive) {
@@ -600,6 +640,8 @@ function onCanvasMove(e) {
     mutate(() => forShape(drag.id, (x) => { x.rotation = round2(a); }));
   } else if (drag.kind === 'resize') {
     resizeTo(p, e.shiftKey);
+  } else if (drag.kind === 'wall') {
+    wallTo(p, e.shiftKey);
   } else if (drag.kind === 'marquee') {
     updateMarquee(p);
   }
@@ -656,6 +698,21 @@ function resizeTo(p, keepAspect) {
   }));
 }
 
+// The wall handle follows the pointer along the shape's diagonal: toward the
+// outer corner thins the wall, toward the center thickens it.
+function wallTo(p, whole) {
+  const o = drag.orig;
+  const t = rad(o.rotation);
+  const wx = p.x - drag.start.x;
+  const wy = p.y - drag.start.y;
+  const lx = wx * Math.cos(t) + wy * Math.sin(t);
+  const ly = -wx * Math.sin(t) + wy * Math.cos(t);
+  let wall = o.wall - (lx + ly) / 2 / drag.k;
+  if (whole) wall = Math.round(wall);
+  wall = Math.max(0.5, Math.min(Math.min(o.w, o.h) / 2 - 0.25, wall));
+  mutate(() => forShape(drag.id, (s) => { s.wall = round2(wall); }));
+}
+
 function onCanvasUp(e) {
   if (e) activePointers.delete(e.pointerId);
   if (pinch) {
@@ -676,6 +733,19 @@ function onCanvasUp(e) {
 
 // ---------------------------------------------------------------------------
 // shape list
+
+// A frame or ring shows as one, with its wall in proportion to the shape.
+function shapeSwatch(s) {
+  const sw = document.createElement('span');
+  sw.className = `shape-swatch ${s.kind}`;
+  if (M.holeShape(s)) {
+    const wall = Math.max(2, Math.min(5, Math.round((s.wall / Math.min(s.w, s.h)) * 14)));
+    sw.style.boxShadow = `inset 0 0 0 ${wall}px ${s.style.color}`;
+  } else {
+    sw.style.background = s.style.color;
+  }
+  return sw;
+}
 
 function renderShapeList() {
   const list = $('shape-list');
@@ -702,9 +772,7 @@ function renderShapeList() {
     li.classList.toggle('selected', isSelected(s.id));
     li.classList.toggle('primary', s.id === state.ui.primary && state.ui.selected.length > 1);
     li.classList.toggle('hidden-shape', s.hidden);
-    const sw = document.createElement('span');
-    sw.className = `shape-swatch ${s.kind}`;
-    sw.style.background = s.style.color;
+    const sw = shapeSwatch(s);
     const name = document.createElement('span');
     name.className = 'shape-name';
     name.textContent = s.name;
@@ -1212,9 +1280,7 @@ function crossingsSection() {
         const explicit = !!M.findCrossing(v, p.id, o.id);
         const row = document.createElement('div');
         row.className = 'crossing-row';
-        const sw = document.createElement('span');
-        sw.className = `shape-swatch ${o.kind}`;
-        sw.style.background = o.style.color;
+        const sw = shapeSwatch(o);
         const name = document.createElement('span');
         name.className = 'shape-name';
         name.textContent = o.name;

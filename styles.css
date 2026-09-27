@@ -151,6 +151,8 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-
   pointer-events: auto;
 }
 .handle.rot { border-radius: 50%; cursor: grab; }
+.handle.wall { border-radius: 50%; background: var(--accent); border-color: #fff; cursor: move; }
+.sel-hole { position: absolute; outline: 1.5px dashed var(--accent); pointer-events: none; }
 .canvas-bar { display: flex; gap: 1rem; padding: 0.4rem 0.9rem; border-top: 1px solid var(--line); background: var(--panel); }
 
 /* ---- variants strip ---- */
