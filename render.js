@@ -74,9 +74,139 @@ const BASE_CSS = `
 .ir-rims { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; }
 .ir-hole-glow { position: absolute; }
 .ir-glass-rim { position: absolute; pointer-events: none; }
+.ir-wall-layer { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; mask-size: 100% 100%; mask-repeat: no-repeat; }
 .ir-hole-clip { position: absolute; overflow: hidden; }
 .ir-hole.ir-glass .ir-hole-in { --_amb-sh-gain: calc(0.12 + var(--amb-elevation) * 0.12); }
 `;
+
+// A frame's or ring's wall as a field: for each point, how far across the wall
+// it lies (t: 0 at the outer edge, 1 at the hole's) and the direction the
+// wall faces there (n, outward). Its masks are smooth, so a few pixels per
+// canvas unit are enough.
+const WALL_PX = 2;
+const wallFields = new Map();
+const wallMaskCache = new Map();
+// Resizing a frame makes a new geometry on every frame of the drag, so only
+// the most recent ones are kept.
+function remember(map, key, value) {
+  map.set(key, value);
+  if (map.size > 48) map.delete(map.keys().next().value);
+  return value;
+}
+const wallKey = (shape) => [shape.kind, shape.w, shape.h, shape.radius, shape.wall].map(num).join(':');
+
+// Signed distance to a box's outline around its center (positive outside)
+// and the outward direction there.
+function boxField(x, y, hw, hh, r, ellipse) {
+  if (ellipse) {
+    const gx = x / (hw * hw);
+    const gy = y / (hh * hh);
+    const rho = Math.hypot(x / hw, y / hh) || 1e-6;
+    const g = Math.hypot(gx, gy) / rho || 1e-6;
+    return [(rho - 1) / g, gx / rho / g, gy / rho / g];
+  }
+  const qx = Math.abs(x) - hw + r;
+  const qy = Math.abs(y) - hh + r;
+  let d, nx, ny;
+  if (qx > 0 && qy > 0) {
+    const l = Math.hypot(qx, qy);
+    [d, nx, ny] = [l - r, qx / l, qy / l];
+  } else if (qx > qy) {
+    [d, nx, ny] = [qx - r, 1, 0];
+  } else {
+    [d, nx, ny] = [qy - r, 0, 1];
+  }
+  return [d, Math.sign(x) * nx, Math.sign(y) * ny];
+}
+
+function wallField(shape, hole) {
+  const key = wallKey(shape);
+  if (wallFields.has(key)) return wallFields.get(key);
+  const ellipse = shape.kind === 'ellipse';
+  const W = Math.ceil(shape.w * WALL_PX);
+  const H = Math.ceil(shape.h * WALL_PX);
+  const outR = Math.max(0, Math.min(shape.radius, shape.w / 2, shape.h / 2));
+  // The wall's facing direction turns around a corner as a tube bent at
+  // least as wide as the wall, so a sharp corner has no crease.
+  const bend = Math.min(Math.max(outR, shape.wall), shape.w / 2, shape.h / 2);
+  const t = new Float32Array(W * H);
+  const nx = new Float32Array(W * H);
+  const ny = new Float32Array(W * H);
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const x = ((i + 0.5) / W) * shape.w - shape.w / 2;
+      const y = ((j + 0.5) / H) * shape.h - shape.h / 2;
+      const [dOut, ox, oy] = boxField(x, y, shape.w / 2, shape.h / 2, outR, ellipse);
+      const [dIn, ix, iy] = boxField(x, y, hole.w / 2, hole.h / 2, hole.radius, ellipse);
+      const a = Math.max(0, -dOut);
+      const b = Math.max(0, dIn);
+      const k = j * W + i;
+      t[k] = a + b > 0 ? a / (a + b) : 0.5;
+      let [, fx, fy] = ellipse
+        ? [0, (1 - t[k]) * ox + t[k] * ix, (1 - t[k]) * oy + t[k] * iy]
+        : boxField(x, y, shape.w / 2, shape.h / 2, bend, false);
+      const n = Math.hypot(fx, fy) || 1;
+      nx[k] = fx / n;
+      ny[k] = fy / n;
+    }
+  }
+  return remember(wallFields, key, { W, H, t, nx, ny });
+}
+
+// An alpha mask of the wall, alpha = fn(t, nx, ny) clamped to 0..1, as a PNG.
+function wallMask(shape, hole, name, fn) {
+  const key = `${wallKey(shape)}:${name}`;
+  if (wallMaskCache.has(key)) return wallMaskCache.get(key);
+  const { W, H, t, nx, ny } = wallField(shape, hole);
+  const img = new ImageData(W, H);
+  for (let k = 0; k < W * H; k++) img.data[k * 4 + 3] = Math.round(Math.max(0, Math.min(1, fn(t[k], nx[k], ny[k]))) * 255);
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  canvas.getContext('2d').putImageData(img, 0, 0);
+  return remember(wallMaskCache, key, canvas.toDataURL('image/png'));
+}
+
+const wallLayer = (url, css) => `<div class="ir-wall-layer" style="mask-image:url('${url}');${css}"></div>`;
+
+// Curved surfaces on a frame or ring follow the wall, as a bent tube (convex)
+// or a groove (concave): each point is shaded by n dotted with the light,
+// times ambient.css's curve profile p across the wall (+1 at the outer edge,
+// -1 at the hole's). That sum splits into an x and a y part, so four
+// light-independent masks carry it: where n.x * p and n.y * p are positive
+// and negative. Each paints the lighter or darker end shade of the curve,
+// weighted by that light component.
+const CURVED = new Set(['convex', 'concave', 'concave-h']);
+const PROFILE = [[0, 1], [0.35, 0.33], [0.5, 0], [0.65, -0.33], [1, -1]];
+
+function profileAt(t) {
+  for (let i = 1; i < PROFILE.length; i++) {
+    const [t1, v1] = PROFILE[i];
+    if (t <= t1) {
+      const [t0, v0] = PROFILE[i - 1];
+      return v0 + ((v1 - v0) * (t - t0)) / (t1 - t0);
+    }
+  }
+  return -1;
+}
+
+// light: the scene light in the shape's own frame.
+function wallShading(shape, hole, light) {
+  const surface = shape.style.surface;
+  const sign = surface === 'convex' ? 1 : -1;
+  const shade = (up) => `hsl(from var(--amb-lit) h s calc(l ${up ? '+' : '-'} var(--amb-curve-delta)))`;
+  const layer = (name, fn, k) => {
+    const w = Math.min(1, Math.abs(k));
+    if (w < 0.005) return '';
+    return wallLayer(wallMask(shape, hole, name, fn), `background:${shade(k * sign > 0)};opacity:${num(w)}`);
+  };
+  let out = layer('x+', (t, nx) => nx * profileAt(t), light.x) + layer('x-', (t, nx) => -nx * profileAt(t), -light.x);
+  // concave-h curves only across the frame's left and right walls.
+  if (surface !== 'concave-h') {
+    out += layer('y+', (t, nx, ny) => ny * profileAt(t), light.y) + layer('y-', (t, nx, ny) => -ny * profileAt(t), -light.y);
+  }
+  return out;
+}
 
 // Per-shape hooks into the metal grain, so Shuffle can move it: an offset for
 // the brushed and blasted tiles, and for radial brushed a spin center, a turn
@@ -331,10 +461,15 @@ function shapeMarkup(shape, scene, { extra = '', plain = false, pass = 'all', ov
   const textured = isTextured(st.material);
   // The ambient.css material: the shape's own, or the one a texture builds on.
   const amb = textured ? ambientMaterial(st) : st.material !== 'matte' && !neon ? st.material : null;
-  if (amb !== 'glass') classes.push(neon ? 'amb-surface' : SURFACE_CLASS[st.surface] || 'amb-surface');
+  const light = localLight(scene, shape.rotation || 0);
+  const hole = holeShape(shape);
+  const metal = metalSurface(shape, light);
+  // A frame or ring gets its curve from wallShading on a flat base, which
+  // also leaves out shiny's box-wide gradients, as a solid curved surface does.
+  const walled = hole && CURVED.has(st.surface) && amb !== 'glass' && !neon && !metal;
+  if (amb !== 'glass') classes.push(neon || walled ? 'amb-surface' : SURFACE_CLASS[st.surface] || 'amb-surface');
   if (amb) classes.push(`amb-mat-${amb}`);
   if (textured) classes.push('ir-textured', `ir-${st.material}`);
-  const light = localLight(scene, shape.rotation || 0);
   const vars = [
     `--amb-light-x:${num(light.x)}`,
     `--amb-light-y:${num(light.y)}`,
@@ -353,15 +488,14 @@ function shapeMarkup(shape, scene, { extra = '', plain = false, pass = 'all', ov
     `--amb-curve-scale:${num(st.curveScale)}`,
     `--amb-grain-amount:${num(st.grain)}`,
   ].join(';') + metalVars(shape, amb);
-  const look = vars + metalSurface(shape, light);
+  const look = vars + metal + (walled ? ';background-image:none' : '');
   const geo = geometryCss(shape) + extra;
   const opacity = st.opacity < 1 ? `opacity:${num(st.opacity)};` : '';
-  const hole = holeShape(shape);
   const cut = cutCss(shape, hole, pass, overlap);
   const body = `<div class="${classes.join(' ')}" style="${geo}${opacity}${look}`;
   if (pass === 'face') {
     if (neon) return `${body};box-shadow:none;${cut}">${neonFace(shape)}</div>`;
-    return `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain, amb)}</div>`;
+    return `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain, amb, walled)}</div>`;
   }
   let out = '';
   if (neon && st.glowSize > 0) {
@@ -376,7 +510,7 @@ function shapeMarkup(shape, scene, { extra = '', plain = false, pass = 'all', ov
     if (pass !== 'shadow') out += `${body};box-shadow:none;${cut}">${neonFace(shape)}</div>`;
     return out;
   }
-  out += `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain, amb)}</div>`;
+  out += `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain, amb, walled)}</div>`;
   return out;
 }
 
@@ -393,7 +527,7 @@ function glassRim(shape, hole, light) {
   return `<div class="ir-glass-rim" style="${holeBox(shape, hole)}box-shadow:${glow},${wash}"></div>`;
 }
 
-function innerMarkup(shape, scene, light, hole, plain, amb) {
+function innerMarkup(shape, scene, light, hole, plain, amb, walled) {
   const st = shape.style;
   let edge = '';
   if (st.chamfer || st.fillet) {
@@ -401,7 +535,7 @@ function innerMarkup(shape, scene, light, hole, plain, amb) {
     if (hole) edge += `<div class="ir-rims"><div class="ir-rim" style="${holeBox(shape, hole)}"></div></div>`;
   }
   if (hole && amb === 'glass') edge = glassRim(shape, hole, light) + edge;
-  const tex = plain ? '' : textureMarkup(shape, light, scene);
+  const tex = (walled ? wallShading(shape, hole, light) : '') + (plain ? '' : textureMarkup(shape, light, scene));
   return coversEdge(st) ? edge + tex : tex + edge;
 }
 
