@@ -4,7 +4,7 @@
 
 A browser editor for lit, layered app icons. Rectangles and ellipses on a 108×108 canvas (the Android adaptive-icon 108dp grid) get an [ambientcss](https://github.com/kikkupico/ambientcss) look or one of our own texture materials under one scene light. A document holds several **variants** of the icon. Export writes PNGs (Play Store 512, legacy launcher densities, adaptive-icon foreground/background layers plus the `mipmap-anydpi-v26` XML, custom sizes); several files download as one zip.
 
-Version 2 is a rewrite. The 1.x app (up to tag `v1.8.0`) shares no code or constraints with it, except `path.js`. **Target browser: Chrome only.**
+Version 2 is a rewrite. The 1.x app (up to tag `v1.8.0`) shares no code or constraints with it, except `path.js`. **Target browser: Chrome only for now.** Other browsers may follow (#8).
 
 ## Hard constraints
 
