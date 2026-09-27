@@ -1394,13 +1394,20 @@ export function metalVars(shape, material) {
   return '';
 }
 
+export function neonTones(st) {
+  const core = num(st.texAmount * 90);
+  return {
+    color: st.color,
+    white: `color-mix(in oklab, ${st.color}, white ${core}%)`,
+    mid: `color-mix(in oklab, ${st.color}, white ${num(core * 0.45)}%)`,
+    rim: `color-mix(in oklab, ${st.color}, black 25%)`,
+  };
+}
+
 // Neon ignores the scene light: a face that is brightest along its core.
 export function neonFace(shape) {
   const st = shape.style;
-  const core = num(st.texAmount * 90);
-  const white = `color-mix(in oklab, ${st.color}, white ${core}%)`;
-  const mid = `color-mix(in oklab, ${st.color}, white ${num(core * 0.45)}%)`;
-  const rim = `color-mix(in oklab, ${st.color}, black 25%)`;
+  const { white, mid, rim } = neonTones(st);
   const ratio = shape.w / shape.h;
   // A long shape is a tube, lit along its middle line; a squarish one glows
   // from its center.

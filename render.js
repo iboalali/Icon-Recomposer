@@ -7,7 +7,7 @@
 // The markup is XHTML-safe: it is parsed as XML inside the capture SVG.
 
 import { CANVAS, holeShape, isOver, paintOrder, shapesOverlap } from './model.js';
-import { TEXTURE_CSS, ambientMaterial, coversEdge, holeFuzz, isTextured, metalSurface, metalVars, neonFace, reflectivity, textureMarkup, underlayMarkup } from './textures.js';
+import { TEXTURE_CSS, ambientMaterial, coversEdge, holeFuzz, isTextured, metalSurface, metalVars, neonFace, neonTones, reflectivity, textureMarkup, underlayMarkup } from './textures.js';
 
 const AMBIENT_URL = new URL('./vendor/ambientcss/ambient.css', import.meta.url);
 
@@ -206,6 +206,20 @@ function wallShading(shape, hole, light) {
     out += layer('y+', (t, nx, ny) => ny * profileAt(t), light.y) + layer('y-', (t, nx, ny) => -ny * profileAt(t), -light.y);
   }
   return out;
+}
+
+// A hollow neon shape is a bent tube, brightest along the middle of its wall:
+// its rim color, then the tube's color, a lighter mid tone and the white
+// core, each faded in toward the middle, as neonFace's tube gradient runs
+// across a long solid shape.
+function neonWallFace(shape, hole) {
+  const tone = neonTones(shape.style);
+  const steps = [[0, 0.14, tone.color], [0.14, 0.32, tone.mid], [0.32, 0.5, tone.white]];
+  const layers = steps.map(([a, b, color]) => wallLayer(
+    wallMask(shape, hole, `neon${a}`, (t) => (Math.min(t, 1 - t) - a) / (b - a)),
+    `background:${color}`,
+  )).join('');
+  return `<div class="ir-neon-face" style="background:${tone.rim}">${layers}</div>`;
 }
 
 // Per-shape hooks into the metal grain, so Shuffle can move it: an offset for
@@ -494,7 +508,7 @@ function shapeMarkup(shape, scene, { extra = '', plain = false, pass = 'all', ov
   const cut = cutCss(shape, hole, pass, overlap);
   const body = `<div class="${classes.join(' ')}" style="${geo}${opacity}${look}`;
   if (pass === 'face') {
-    if (neon) return `${body};box-shadow:none;${cut}">${neonFace(shape)}</div>`;
+    if (neon) return `${body};box-shadow:none;${cut}">${hole ? neonWallFace(shape, hole) : neonFace(shape)}</div>`;
     return `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain, amb, walled)}</div>`;
   }
   let out = '';
@@ -507,7 +521,7 @@ function shapeMarkup(shape, scene, { extra = '', plain = false, pass = 'all', ov
   if (!plain) out += underlayMarkup(shape, scene, geo, hole ? cutCss(shape, hole, 'all', overlap) : '');
   if (hole) out += holeMarkup(shape, hole, geo + opacity, vars, amb);
   if (neon) {
-    if (pass !== 'shadow') out += `${body};box-shadow:none;${cut}">${neonFace(shape)}</div>`;
+    if (pass !== 'shadow') out += `${body};box-shadow:none;${cut}">${hole ? neonWallFace(shape, hole) : neonFace(shape)}</div>`;
     return out;
   }
   out += `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain, amb, walled)}</div>`;
