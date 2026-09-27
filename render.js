@@ -214,11 +214,13 @@ const holePath = (shape, hole) => boxPath(shape.wall, shape.wall, hole.w, hole.h
 // The export rasterizes it at its own size, so it is drawn at the output
 // resolution: the seam overlap is 1.25 output pixels, which gives the pixels
 // per canvas unit.
-function maskUrl(d, x, y, w, h, overlap) {
+function svgUrl(body, x, y, w, h, overlap) {
   const k = Math.min(16, Math.max(2, Math.ceil(1.25 / overlap)));
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.ceil(w * k)}" height="${Math.ceil(h * k)}" viewBox="${num(x)} ${num(y)} ${num(w)} ${num(h)}" preserveAspectRatio="none"><path fill-rule="evenodd" d="${d}"/></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.ceil(w * k)}" height="${Math.ceil(h * k)}" viewBox="${num(x)} ${num(y)} ${num(w)} ${num(h)}" preserveAspectRatio="none">${body}</svg>`;
   return `url('data:image/svg+xml,${encodeURIComponent(svg)}')`;
 }
+
+const maskUrl = (d, x, y, w, h, overlap) => svgUrl(`<path fill-rule="evenodd" d="${d}"/>`, x, y, w, h, overlap);
 
 // A mask rather than a clip-path, so it combines with a crossing's clip-path.
 // no-clip keeps the drop shadow, which paints outside the box.
@@ -528,12 +530,22 @@ function reflectionMarkup(glossy, sources, scene, overlap, { holes = [], within 
     ? `radial-gradient(closest-side,#000 calc(100% - ${f}px),transparent)`
     : `linear-gradient(to right,transparent,#000 ${f}px,#000 calc(100% - ${f}px),transparent),linear-gradient(transparent,#000 ${f}px,#000 calc(100% - ${f}px),transparent)`;
   const hole = holeShape(glossy);
-  const mask = hole
-    ? `${fade},${maskUrl(outlinePath(glossy) + holePath(glossy, hole), 0, 0, glossy.w, glossy.h, overlap)};mask-size:100% 100%;mask-repeat:no-repeat`
-    : fade;
+  const mask = hole ? `${fade},${holeFadeUrl(glossy, hole, f, overlap)};mask-size:100% 100%;mask-repeat:no-repeat` : fade;
   const blur = num((1 + 0.5 * Math.max(...sources.map((s) => s.style.elevation))) / r);
   const alpha = num(REFLECT_ALPHA * st.reflect * r * st.opacity);
   return `<div class="ir-refl" style="${geometryCss(glossy)}clip-path:path(evenodd,'${d}');filter:blur(${blur}px);mask-image:${mask};mask-composite:intersect;opacity:${alpha}">${copies}</div>`;
+}
+
+// A mask over a hollow shape's box that fades out over `f` units toward the
+// hole and is empty inside it: the hole, grown by f/2 and blurred.
+function holeFadeUrl(shape, hole, f, overlap) {
+  const { w, h } = shape;
+  const area = `x="0" y="0" width="${num(w)}" height="${num(h)}"`;
+  const body = `<filter id="b" filterUnits="userSpaceOnUse" ${area}><feGaussianBlur stdDeviation="${num(f / 4)}"/></filter>`
+    + `<mask id="m" maskUnits="userSpaceOnUse" ${area}><rect ${area} fill="#fff"/>`
+    + `<path d="${holePath(shape, hole)}" stroke="#000" stroke-width="${num(f)}" stroke-linejoin="round" filter="url(#b)"/></mask>`
+    + `<rect ${area} mask="url(#m)"/>`;
+  return svgUrl(body, 0, 0, w, h, overlap);
 }
 
 const REFLECT_DROP = 9;
