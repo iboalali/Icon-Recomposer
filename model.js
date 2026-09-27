@@ -4,6 +4,9 @@
 // background shapes always paint under foreground ones (paintOrder), as on a
 // launcher. Within a layer, array order is paint order.
 //
+// Shapes marked `level` that follow each other in paint order sit on one
+// level: none of them casts its shadow or glow onto another's face.
+//
 // A variant's crossings override the paint order where two shapes overlap:
 // { over, under } draws `over` on top of `under` inside `under`'s outline, even
 // when `over` paints below it. That allows woven designs, where A is over B, B
@@ -284,8 +287,10 @@ export function newShape(kind = 'rect', over = {}) {
     h: size,
     radius: kind === 'ellipse' ? 0 : 16,
     rotation: 0,
+    wall: 0,
     hidden: false,
     layer: 'foreground',
+    level: false,
     style: defaultStyle(),
     ...over,
   };
@@ -428,8 +433,10 @@ function normalizeShape(s = {}) {
     h: clamp(s.h, 1, CANVAS * 3, base.h),
     radius: clamp(s.radius, 0, CANVAS * 1.5, base.radius),
     rotation: clamp(s.rotation, -360, 360, 0),
+    wall: clamp(s.wall, 0, CANVAS * 1.5, 0),
     hidden: !!s.hidden,
     layer: pick(s.layer, LAYERS, 'foreground'),
+    level: !!s.level,
     style: normalizeStyle(s.style),
   };
 }
@@ -480,7 +487,7 @@ function normalizeGuide(g) {
   if (!g || !Array.isArray(g.paths)) return null;
   const paths = g.paths
     .filter((p) => p && typeof p.d === 'string' && p.d)
-    .map((p) => ({ d: p.d, fill: hex(p.fill, '#9e9e9e'), evenOdd: !!p.evenOdd }));
+    .map((p) => ({ d: p.d, fill: hex(p.fill, '#9e9e9e'), evenOdd: !!p.evenOdd, stroke: clamp(p.stroke, 0, CANVAS, 0) }));
   if (!paths.length) return null;
   return { name: typeof g.name === 'string' ? g.name : 'guide', paths, visible: g.visible !== false };
 }
@@ -553,7 +560,17 @@ export function isOver(variant, a, b) {
   return order.indexOf(a) > order.indexOf(b);
 }
 
-export function insideShape(s, p) {
+// A hollow shape (wall > 0) is a frame or a ring: the shape minus its hole,
+// the same shape inset by `wall` on every side, with the corner radius the
+// inset leaves. A wall too thick to leave a hole makes the shape solid.
+export function holeShape(s) {
+  const wall = s.wall || 0;
+  if (wall <= 0 || wall * 2 >= Math.min(s.w, s.h)) return null;
+  const r = s.kind === 'ellipse' ? 0 : Math.max(0, Math.min(s.radius, s.w / 2, s.h / 2) - wall);
+  return { ...s, x: s.x + wall, y: s.y + wall, w: s.w - wall * 2, h: s.h - wall * 2, radius: r, wall: 0 };
+}
+
+function insideBox(s, p, rounded) {
   const t = (s.rotation * Math.PI) / 180;
   const dx = p.x - (s.x + s.w / 2);
   const dy = p.y - (s.y + s.h / 2);
@@ -561,9 +578,19 @@ export function insideShape(s, p) {
   const ly = -dx * Math.sin(t) + dy * Math.cos(t);
   const hw = s.w / 2;
   const hh = s.h / 2;
-  return s.kind === 'ellipse'
-    ? (lx / hw) ** 2 + (ly / hh) ** 2 <= 1
-    : Math.abs(lx) <= hw && Math.abs(ly) <= hh;
+  if (s.kind === 'ellipse') return (lx / hw) ** 2 + (ly / hh) ** 2 <= 1;
+  if (Math.abs(lx) > hw || Math.abs(ly) > hh) return false;
+  if (!rounded) return true;
+  const r = Math.min(s.radius, hw, hh);
+  const qx = Math.abs(lx) - (hw - r);
+  const qy = Math.abs(ly) - (hh - r);
+  return qx <= 0 || qy <= 0 || qx * qx + qy * qy <= r * r;
+}
+
+export function insideShape(s, p) {
+  if (!insideBox(s, p, false)) return false;
+  const hole = holeShape(s);
+  return !hole || !insideBox(hole, p, true);
 }
 
 // Samples a grid inside `a` and reports whether any sample lies inside `b`.
@@ -587,10 +614,10 @@ export function shapesOverlap(a, b) {
 
 // What "Copy to variants" can carry, per shape and per variant.
 export const COPY_SHAPE_PARTS = [
-  { id: 'geometry', label: 'Geometry (position, size, corners, rotation, kind)' },
+  { id: 'geometry', label: 'Geometry (position, size, corners, rotation, kind, wall)' },
   { id: 'look', label: 'Look (material, surface, depth, edges, opacity, glow)' },
   { id: 'color', label: 'Colors (shape, glow and accent colors)' },
-  { id: 'layer', label: 'Layer and visibility' },
+  { id: 'layer', label: 'Layer, level and visibility' },
 ];
 export const COPY_VARIANT_PARTS = [
   { id: 'light', label: 'Light' },
@@ -600,7 +627,7 @@ export const COPY_VARIANT_PARTS = [
   { id: 'missing', label: 'Add shapes the variant does not have' },
 ];
 
-const GEOMETRY_KEYS = ['kind', 'x', 'y', 'w', 'h', 'radius', 'rotation'];
+const GEOMETRY_KEYS = ['kind', 'x', 'y', 'w', 'h', 'radius', 'rotation', 'wall'];
 const COLOR_KEYS = ['color', 'glowColor', 'accent', 'accent2'];
 
 // Copies the chosen parts of the shapes `ids` (and the chosen variant-wide
@@ -630,6 +657,7 @@ export function copyIntoVariant(src, dst, ids, parts) {
     if (parts.has('color')) for (const k of COLOR_KEYS) d.style[k] = s.style[k];
     if (parts.has('layer')) {
       d.layer = s.layer;
+      d.level = s.level;
       d.hidden = s.hidden;
     }
   }

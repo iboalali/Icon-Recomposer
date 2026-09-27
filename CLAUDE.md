@@ -34,7 +34,8 @@ Version 2 is a rewrite. The 1.x app (up to tag `v1.8.0`) shares no code or const
 - Each of `doc.variants[]` is a **full, independent copy** of the design (`scene`, `background`, `shapes[]`). Shapes keep the **same `id` across variants**; "Apply edits to all variants" and "Copy to variants" (`M.copyIntoVariant`) match by id. Colors (`color`, `glowColor`) are a separate copy part from "look", because variants usually differ in color.
 - `layer: 'foreground' | 'background'`: background always paints under foreground; array order is paint order within a layer.
 - `doc.guide` (tracing guide from the last VectorDrawable import) belongs to the document, not a variant, and is never exported.
-- VectorDrawable import only creates shapes the renderer can light (axis-aligned ellipses, rounded rects, rectilinear outlines split by `rectilinearCover`). Everything else is reported as skipped.
+- `wall > 0` makes a shape hollow (a frame or ring); `M.holeShape()` is its hole, the shape inset by `wall`. `level: true` shapes that are adjacent in paint order within one layer form a level run.
+- VectorDrawable import only creates shapes the renderer can light (axis-aligned ellipses, rounded rects, rectilinear outlines split by `rectilinearCover`, hollow shapes from a concentric hole or a closed stroke). Everything else is reported as skipped.
 - Project files: `.icjson`, `format: 'icon-recomposer/2'`. Bump `SCHEMA_VERSION` only when the shape changes, and normalize old fields in `parseProject`/`normalizeStyle`.
 
 ## Rendering traps
@@ -48,6 +49,9 @@ Version 2 is a rewrite. The 1.x app (up to tag `v1.8.0`) shares no code or const
 - Anything drawn behind a shape is grayed by the shape's own drop shadow, so effects past the outline (felt fuzz) are children masked to the outer band. Chrome rounds sub-pixel CSS borders down to nothing, so fine lines (denim stitching) are SVG masks.
 - Materials share generic style fields (`texAngle`, `texScale`, `texAmount`, `finish`, `texTone`, `accent`, `accent2`, `seed`), each read in the material's own way and labeled per material in the inspector. `M.materialDefaults()` resets them on material change. Shuffle writes `style.seed` (0 = original layout).
 - Frosted glass overrides ambient.css's private `--_glass-*` variables from `.ir-shape.amb-mat-glass`.
+- **Holes** are an even-odd SVG `mask-image` with `mask-clip: no-clip` (padded by `inkReach` so the drop shadow survives), never a clip-path, so they combine with crossing clip-paths. The shadow into the hole is `.ir-hole-in`, generated from the `.ambient` rule's drop layers made `inset` (`holeShadowCss`); the hole's rim is `.ir-rim`, the edge bands without `inset`. Only custom properties go on the hole wrapper: `metalSurface` also sets `background`.
+- **Level runs** draw each shape twice without painting anything twice: a `shadow` pass masked to outside the outline (inset by the seam overlap), then a `face` pass masked to the outline.
+- Mask SVGs are drawn at the output resolution (`maskUrl`): the export rasterizes a mask image at its own size.
 
 ## Export
 

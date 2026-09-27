@@ -269,8 +269,14 @@ function renderTraceGuide() {
   layer.replaceChildren(...g.paths.map((p) => {
     const el = document.createElementNS(NS, 'path');
     el.setAttribute('d', p.d);
-    el.setAttribute('fill', p.fill);
-    if (p.evenOdd) el.setAttribute('fill-rule', 'evenodd');
+    if (p.stroke) {
+      el.setAttribute('fill', 'none');
+      el.setAttribute('stroke', p.fill);
+      el.setAttribute('stroke-width', p.stroke);
+    } else {
+      el.setAttribute('fill', p.fill);
+      if (p.evenOdd) el.setAttribute('fill-rule', 'evenodd');
+    }
     return el;
   }));
 }
@@ -1286,6 +1292,7 @@ function buildInspector(root) {
   const shapeSec = section(() => (state.ui.selected.length > 1 ? `${state.ui.selected.length} shapes` : 'Shape'), [
     singleOnly(text('Name', { get: () => sh().name, set: shapeSet((s, v) => { s.name = v; }) })),
     select('Layer', { options: M.LAYERS, ...geoCtl('layer') }),
+    checkbox('Level with its neighbors', geoCtl('level')),
     select('Kind', {
       options: [{ id: 'rect', label: 'Rectangle' }, { id: 'ellipse', label: 'Ellipse' }],
       ...geoCtl('kind'),
@@ -1293,6 +1300,12 @@ function buildInspector(root) {
     singleOnly(pair('Position', numberInput('X', { step: 0.5, ...geoCtl('x') }), numberInput('Y', { step: 0.5, ...geoCtl('y') }))),
     singleOnly(pair('Size', numberInput('W', { step: 0.5, ...geoCtl('w') }), numberInput('H', { step: 0.5, ...geoCtl('h') }))),
     slider('Corner radius', { min: 0, max: 54, step: 0.5, ...geoCtl('radius') }),
+    checkbox('Hollow', {
+      get: () => sh().wall > 0,
+      mixed: mixedOf((s) => s.wall > 0),
+      set: shapeSet((s, v) => { s.wall = v ? round2(Math.max(0.5, Math.min(s.w, s.h) / 8)) : 0; }),
+    }),
+    showWhen(() => selectedShapes().some((s) => s.wall > 0), slider('Wall', { min: 0.5, max: 54, step: 0.25, ...geoCtl('wall') })),
     slider('Rotation', { min: -180, max: 180, step: 1, ...geoCtl('rotation') }),
     actionButton('Copy to variants…', () => openCopy('selected'), () => state.doc.variants.length < 2),
   ]);

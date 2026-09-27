@@ -6,7 +6,7 @@
 //
 // The markup is XHTML-safe: it is parsed as XML inside the capture SVG.
 
-import { CANVAS, isOver, paintOrder, shapesOverlap } from './model.js';
+import { CANVAS, holeShape, isOver, paintOrder, shapesOverlap } from './model.js';
 import { TEXTURE_CSS, ambientMaterial, coversEdge, isTextured, metalSurface, metalVars, neonFace, reflectivity, textureMarkup, underlayMarkup } from './textures.js';
 
 const AMBIENT_URL = new URL('./vendor/ambientcss/ambient.css', import.meta.url);
@@ -19,10 +19,22 @@ const SURFACE_CLASS = {
   groove: 'amb-groove',
 };
 
+function edgeBands(inset) {
+  return `
+    ${inset}calc(var(--amb-light-x) * var(--_cw) * -1px) calc(var(--amb-light-y) * var(--_cw) * -1px) 0 0
+      color-mix(in oklab, var(--_tint) calc(var(--_chl) * 100%), transparent),
+    ${inset}calc(var(--amb-light-x) * var(--_cw) * 1px) calc(var(--amb-light-y) * var(--_cw) * 1px) 0 0
+      color-mix(in oklab, var(--_dark) calc(var(--_csh) * 100%), transparent),
+    ${inset}calc(var(--amb-light-x) * var(--_fw) * -1.4px) calc(var(--amb-light-y) * var(--_fw) * -1.4px) 2px 0
+      color-mix(in oklab, var(--_tint) calc(var(--_fhl) * 100%), transparent),
+    ${inset}calc(var(--amb-light-x) * var(--_fw) * 1.4px) calc(var(--amb-light-y) * var(--_fw) * 1.4px) 2px 0
+      color-mix(in oklab, var(--_dark) calc(var(--_fsh) * 100%), transparent)`;
+}
+
 const BASE_CSS = `
 .ir-stage { position: relative; width: ${CANVAS}px; height: ${CANVAS}px; overflow: hidden; }
-.ir-shape, .ir-halo, .ir-refl { position: absolute; box-sizing: border-box; }
-.ir-halo, .ir-refl { background: transparent; pointer-events: none; }
+.ir-shape, .ir-halo, .ir-refl, .ir-hole { position: absolute; box-sizing: border-box; }
+.ir-halo, .ir-refl, .ir-hole { background: transparent; pointer-events: none; }
 /* Frost scales ambient.css's glass pane: 0 is clear glass, 0.3 is ambient.css's
    own fit, 1 is a near-opaque milky pane. The pane keeps the tone it has at the
    fit, so more frost turns it milkier, not darker. */
@@ -39,10 +51,8 @@ const BASE_CSS = `
     (var(--amb-elevation) * 1.51 + var(--amb-thickness) * 0.63) * var(--_ir-lo) * 1px + var(--_ir-hi) * 6px
   );
 }
-.ir-edge {
+.ir-edge, .ir-rim {
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
   pointer-events: none;
   --_g: max(0, min(var(--amb-thickness), 1));
   --_cw: max(-1 * var(--amb-thickness), min(var(--amb-chamfer-width), var(--amb-thickness)));
@@ -55,16 +65,15 @@ const BASE_CSS = `
   --_csh: max(0, min(1, var(--ir-chamfer) * var(--_g) * ((var(--_k) - var(--_f)) * 0.19 + 0.24)));
   --_fhl: max(0, min(1, var(--ir-fillet) * var(--_g) * (var(--_k) * 1.44 + var(--_f) * 0.85 - 0.99)));
   --_fsh: max(0, min(1, var(--ir-fillet) * var(--_g) * ((var(--_k) - var(--_f)) * 0.23 + 0.3)));
-  box-shadow:
-    inset calc(var(--amb-light-x) * var(--_cw) * -1px) calc(var(--amb-light-y) * var(--_cw) * -1px) 0 0
-      color-mix(in oklab, var(--_tint) calc(var(--_chl) * 100%), transparent),
-    inset calc(var(--amb-light-x) * var(--_cw) * 1px) calc(var(--amb-light-y) * var(--_cw) * 1px) 0 0
-      color-mix(in oklab, var(--_dark) calc(var(--_csh) * 100%), transparent),
-    inset calc(var(--amb-light-x) * var(--_fw) * -1.4px) calc(var(--amb-light-y) * var(--_fw) * -1.4px) 2px 0
-      color-mix(in oklab, var(--_tint) calc(var(--_fhl) * 100%), transparent),
-    inset calc(var(--amb-light-x) * var(--_fw) * 1.4px) calc(var(--amb-light-y) * var(--_fw) * 1.4px) 2px 0
-      color-mix(in oklab, var(--_dark) calc(var(--_fsh) * 100%), transparent);
 }
+.ir-edge { inset: 0; border-radius: inherit; box-shadow: ${edgeBands('inset ')}; }
+/* The hole's rim: the same bands on the outside of the hole's box, which is
+   the frame's face. The wall facing the light is on the far side of the hole,
+   so the offsets keep their sign. */
+.ir-rim { box-shadow: ${edgeBands('')}; }
+.ir-rims { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; }
+.ir-hole-glow { position: absolute; }
+.ir-hole.ir-glass .ir-hole-in { --_amb-sh-gain: calc(0.12 + var(--amb-elevation) * 0.12); }
 `;
 
 // Per-shape hooks into the metal grain, so Shuffle can move it: an offset for
@@ -93,7 +102,41 @@ function adaptAmbient(css) {
     if (!out.includes(from)) console.warn(`ambient.css changed: "${from}" not found`);
     out = out.split(from).join(to);
   }
+  return out + holeShadowCss(css);
+}
+
+// Splits at `sep` outside parentheses.
+function splitTop(str, sep) {
+  const out = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] === '(') depth++;
+    else if (str[i] === ')') depth--;
+    else if (str[i] === sep && !depth) {
+      out.push(str.slice(from, i));
+      from = i + 1;
+    }
+  }
+  out.push(str.slice(from));
   return out;
+}
+
+// The shadow a hollow shape casts into its hole: the .ambient rule's drop
+// shadow layers, made inset on the hole's box. An inset shadow is the box's
+// outside moved by the offset, which is where the walls around the hole cast.
+function holeShadowCss(css) {
+  const block = /\n\.ambient \{([\s\S]*?)\n\}/.exec(css);
+  const body = block ? block[1].replace(/\/\*[\s\S]*?\*\//g, '') : '';
+  const decls = splitTop(body, ';');
+  const shadow = decls.find((d) => /^\s*box-shadow\s*:/.test(d));
+  if (!shadow) {
+    console.warn('ambient.css changed: the .ambient box-shadow was not found');
+    return '';
+  }
+  const drops = splitTop(shadow.replace(/^\s*box-shadow\s*:/, ''), ',').map((l) => l.trim()).filter((l) => !l.startsWith('inset'));
+  const vars = decls.filter((d) => /^\s*--/.test(d)).join(';');
+  return `\n.ir-hole-in { position: absolute; ${vars}; box-shadow: ${drops.map((l) => `inset ${l}`).join(', ')}; }\n`;
 }
 
 let cssPromise = null;
@@ -146,9 +189,78 @@ function geometryCss(shape) {
   return css;
 }
 
+// A box's outline as an SVG subpath, in the shape's own box.
+function boxPath(x, y, w, h, r, ellipse) {
+  if (ellipse) {
+    const [rx, ry] = [num(w / 2), num(h / 2)];
+    return `M${num(x)} ${num(y + h / 2)}a${rx} ${ry} 0 1 0 ${num(w)} 0a${rx} ${ry} 0 1 0 ${num(-w)} 0Z`;
+  }
+  const k = num(Math.max(0, Math.min(r, w / 2, h / 2)));
+  const [x0, y0, x1, y1] = [num(x), num(y), num(x + w), num(y + h)];
+  if (!k) return `M${x0} ${y0}H${x1}V${y1}H${x0}Z`;
+  const a = `A${k} ${k} 0 0 1`;
+  return `M${num(x + k)} ${y0}H${num(x + w - k)}${a} ${x1} ${num(y + k)}V${num(y + h - k)}${a} ${num(x + w - k)} ${y1}H${num(x + k)}${a} ${x0} ${num(y + h - k)}V${num(y + k)}${a} ${num(x + k)} ${y0}Z`;
+}
+
+const outlinePath = (shape, inset = 0) => boxPath(inset, inset, shape.w - inset * 2, shape.h - inset * 2, shape.radius - inset, shape.kind === 'ellipse');
+
+// The hole's outline in its shape's box.
+const holePath = (shape, hole) => boxPath(shape.wall, shape.wall, hole.w, hole.h, hole.radius, shape.kind === 'ellipse');
+
+// An even-odd SVG mask image of the area (x, y, w, h) of an element's box.
+// The export rasterizes it at its own size, so it is drawn at the output
+// resolution: the seam overlap is 1.25 output pixels, which gives the pixels
+// per canvas unit.
+function maskUrl(d, x, y, w, h, overlap) {
+  const k = Math.min(16, Math.max(2, Math.ceil(1.25 / overlap)));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.ceil(w * k)}" height="${Math.ceil(h * k)}" viewBox="${num(x)} ${num(y)} ${num(w)} ${num(h)}" preserveAspectRatio="none"><path fill-rule="evenodd" d="${d}"/></svg>`;
+  return `url('data:image/svg+xml,${encodeURIComponent(svg)}')`;
+}
+
+// A mask rather than a clip-path, so it combines with a crossing's clip-path.
+// no-clip keeps the drop shadow, which paints outside the box.
+function maskCss(d, x, y, w, h, overlap) {
+  return `mask-image:${maskUrl(d, x, y, w, h, overlap)};mask-position:${num(x)}px ${num(y)}px;mask-size:${num(w)}px ${num(h)}px;mask-repeat:no-repeat;mask-clip:no-clip;`;
+}
+
+// What an element of `shape` may paint. pass 'all': everything but the hole;
+// 'shadow': only around the shape, reaching slightly under its edge so the
+// face's anti-aliased rim has no gap; 'face': only the shape's body.
+function cutCss(shape, hole, pass, overlap) {
+  if (pass === 'face') return maskCss(outlinePath(shape) + (hole ? holePath(shape, hole) : ''), 0, 0, shape.w, shape.h, overlap);
+  if (pass !== 'shadow' && !hole) return '';
+  const p = inkReach(shape);
+  const around = boxPath(-p, -p, shape.w + p * 2, shape.h + p * 2, 0, false);
+  return maskCss(around + (pass === 'shadow' ? outlinePath(shape, overlap) : holePath(shape, hole)), -p, -p, shape.w + p * 2, shape.h + p * 2, overlap);
+}
+
+const holeBox = (shape, hole) => `left:${num(shape.wall)}px;top:${num(shape.wall)}px;width:${num(hole.w)}px;height:${num(hole.h)}px;border-radius:${shape.kind === 'ellipse' ? '50%' : `${num(hole.radius)}px`};`;
+
+// What a hollow shape paints into its hole: its drop shadow on whatever shows
+// through, and its glow.
+function holeMarkup(shape, hole, geo, vars, amb) {
+  const st = shape.style;
+  const neon = st.material === 'neon';
+  const box = holeBox(shape, hole);
+  let glow = '';
+  if (neon && st.glowSize > 0) {
+    const g = num(st.glowSize);
+    glow = `inset 0 0 ${num(g / 3)}px ${num(g / 8)}px ${st.color},inset 0 0 ${g}px ${num(g / 3)}px ${st.color}`;
+  } else if (st.glow && st.glowSize > 0) {
+    glow = `inset 0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}`;
+  }
+  let inner = neon ? '' : `<div class="ir-hole-in" style="${box}"></div>`;
+  if (glow) inner += `<div class="ir-hole-glow" style="${box}box-shadow:${glow}"></div>`;
+  if (!inner) return '';
+  return `<div class="ir-hole${amb === 'glass' ? ' ir-glass' : ''}" style="${geo}${vars}">${inner}</div>`;
+}
+
 // extra: CSS appended to the element and its glow, e.g. a crossing clip-path.
 // plain: without texture layers.
-function shapeMarkup(shape, scene, extra = '', plain = false) {
+// pass: 'all', or for a shape sharing a level with its neighbors 'shadow'
+// (its shadows and glow) and 'face' (its body), drawn in separate rounds.
+// overlap: the crossing seam overlap, in canvas units.
+function shapeMarkup(shape, scene, { extra = '', plain = false, pass = 'all', overlap = 0.3 } = {}) {
   const st = shape.style;
   const classes = ['ir-shape', 'ambient'];
   const neon = st.material === 'neon';
@@ -176,9 +288,17 @@ function shapeMarkup(shape, scene, extra = '', plain = false) {
     `--ir-frost:${num(st.frost)}`,
     `--amb-curve-scale:${num(st.curveScale)}`,
     `--amb-grain-amount:${num(st.grain)}`,
-  ].join(';') + metalVars(shape, amb) + metalSurface(shape, light);
+  ].join(';') + metalVars(shape, amb);
+  const look = vars + metalSurface(shape, light);
   const geo = geometryCss(shape) + extra;
   const opacity = st.opacity < 1 ? `opacity:${num(st.opacity)};` : '';
+  const hole = holeShape(shape);
+  const cut = cutCss(shape, hole, pass, overlap);
+  const body = `<div class="${classes.join(' ')}" style="${geo}${opacity}${look}`;
+  if (pass === 'face') {
+    if (neon) return `${body};box-shadow:none;${cut}">${neonFace(shape)}</div>`;
+    return `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain)}</div>`;
+  }
   let out = '';
   if (neon && st.glowSize > 0) {
     const g = num(st.glowSize);
@@ -186,16 +306,25 @@ function shapeMarkup(shape, scene, extra = '', plain = false) {
   } else if (st.glow && st.glowSize > 0) {
     out += `<div class="ir-halo" style="${geo}${opacity}box-shadow:0 0 ${num(st.glowSize)}px ${num(st.glowSize / 3)}px ${st.glowColor}"></div>`;
   }
-  if (!plain) out += underlayMarkup(shape, scene, geo);
+  if (!plain) out += underlayMarkup(shape, scene, geo + (hole ? cutCss(shape, hole, 'all', overlap) : ''));
+  if (hole) out += holeMarkup(shape, hole, geo + opacity, vars, amb);
   if (neon) {
-    out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars};box-shadow:none">${neonFace(shape)}</div>`;
+    if (pass !== 'shadow') out += `${body};box-shadow:none;${cut}">${neonFace(shape)}</div>`;
     return out;
   }
-  const edge = st.chamfer || st.fillet ? '<div class="ir-edge"></div>' : '';
-  const tex = plain ? '' : textureMarkup(shape, light, scene);
-  const inner = coversEdge(st) ? edge + tex : tex + edge;
-  out += `<div class="${classes.join(' ')}" style="${geo}${opacity}${vars}">${inner}</div>`;
+  out += `${body};${cut}">${innerMarkup(shape, scene, light, hole, plain)}</div>`;
   return out;
+}
+
+function innerMarkup(shape, scene, light, hole, plain) {
+  const st = shape.style;
+  let edge = '';
+  if (st.chamfer || st.fillet) {
+    edge = '<div class="ir-edge"></div>';
+    if (hole) edge += `<div class="ir-rims"><div class="ir-rim" style="${holeBox(shape, hole)}"></div></div>`;
+  }
+  const tex = plain ? '' : textureMarkup(shape, light, scene);
+  return coversEdge(st) ? edge + tex : tex + edge;
 }
 
 // Outline of a shape as a convex polygon in canvas coordinates. Rounded
@@ -317,8 +446,14 @@ const ring = (pts) => `M${pts.map(([x, y]) => `${num(x)} ${num(y)}`).join('L')}Z
 //   overlap;
 // - the original `over` gets a hole where they overlap, which the copy covers.
 // Shapes that paint after `under` still cover all of it.
-function overCopy(over, under, scene) {
-  return shapeMarkup(over, scene, clipCss(toBox(over, outline(under))));
+// A hollow shape's hole takes part in none of this: through a hole, the shape
+// on the other side shows as it would with no crossing.
+function overCopy(over, under, scene, overlap) {
+  const hole = holeShape(under);
+  const clip = hole
+    ? `clip-path:path(evenodd,'${ring(toBox(over, outline(under)))}${ring(toBox(over, outline(hole)))}');`
+    : clipCss(toBox(over, outline(under)));
+  return shapeMarkup(over, scene, { extra: clip, overlap });
 }
 
 // Holes are inset by `overlap` canvas units (about 1.25 output pixels) so that
@@ -329,15 +464,26 @@ function overCopy(over, under, scene) {
 function crossingClip(shape, holes, overlap) {
   const pad = inkReach(shape);
   let d = ring([[-pad, -pad], [shape.w + pad, -pad], [shape.w + pad, shape.h + pad], [-pad, shape.h + pad]]);
-  for (const over of holes.over) {
-    const hole = insetPolygon(outline(over), overlap);
-    d += ring(toBox(shape, hole));
-    const shared = clipPolygon(hole, outline(shape));
+  // Each ring flips the even-odd parity, so a ring and the part of it inside
+  // the shape's outline together give back the area outside the outline.
+  const flip = (pts) => {
+    d += ring(toBox(shape, pts));
+    const shared = clipPolygon(pts, outline(shape));
     if (shared.length > 2) d += ring(toBox(shape, shared));
+  };
+  for (const over of holes.over) {
+    flip(insetPolygon(outline(over), overlap));
+    const oh = holeShape(over);
+    if (oh) flip(insetPolygon(outline(oh), -overlap));
   }
   for (const under of holes.under) {
     const shared = clipPolygon(outline(shape), outline(under));
-    if (shared.length > 2) d += ring(toBox(shape, insetPolygon(shared, overlap)));
+    if (shared.length <= 2) continue;
+    const cut = insetPolygon(shared, overlap);
+    d += ring(toBox(shape, cut));
+    const uh = holeShape(under);
+    const through = uh ? clipPolygon(insetPolygon(outline(uh), -overlap), cut) : [];
+    if (through.length > 2) d += ring(toBox(shape, through));
   }
   return `clip-path:path(evenodd,'${d}');`;
 }
@@ -366,7 +512,7 @@ function reflectionMarkup(glossy, sources, scene, overlap, { holes = [], within 
     c.y = cy - src.h / 2;
     c.rotation = (src.rotation || 0) - (glossy.rotation || 0) + 180;
     Object.assign(c.style, { elevation: 0, glow: false, glowSize: 0 });
-    return shapeMarkup(c, scene, '', true);
+    return shapeMarkup(c, scene, { plain: true, overlap });
   }).join('');
   const inner = insetPolygon(outline(glossy), overlap);
   let d = ring(toBox(glossy, within ? clipPolygon(inner, outline(within)) : inner));
@@ -378,9 +524,13 @@ function reflectionMarkup(glossy, sources, scene, overlap, { holes = [], within 
   const fade = glossy.kind === 'ellipse'
     ? `radial-gradient(closest-side,#000 calc(100% - ${f}px),transparent)`
     : `linear-gradient(to right,transparent,#000 ${f}px,#000 calc(100% - ${f}px),transparent),linear-gradient(transparent,#000 ${f}px,#000 calc(100% - ${f}px),transparent)`;
+  const hole = holeShape(glossy);
+  const mask = hole
+    ? `${fade},${maskUrl(outlinePath(glossy) + holePath(glossy, hole), 0, 0, glossy.w, glossy.h, overlap)};mask-size:100% 100%;mask-repeat:no-repeat`
+    : fade;
   const blur = num((1 + 0.5 * Math.max(...sources.map((s) => s.style.elevation))) / r);
   const alpha = num(REFLECT_ALPHA * st.reflect * r * st.opacity);
-  return `<div class="ir-refl" style="${geometryCss(glossy)}clip-path:path(evenodd,'${d}');filter:blur(${blur}px);mask-image:${fade};mask-composite:intersect;opacity:${alpha}">${copies}</div>`;
+  return `<div class="ir-refl" style="${geometryCss(glossy)}clip-path:path(evenodd,'${d}');filter:blur(${blur}px);mask-image:${mask};mask-composite:intersect;opacity:${alpha}">${copies}</div>`;
 }
 
 const REFLECT_DROP = 9;
@@ -425,20 +575,30 @@ export function stageMarkup(variant, { layer = 'all', transparent = false, pxPer
     if (!coveredBy.has(over.id)) coveredBy.set(over.id, []);
     coveredBy.get(over.id).push(under);
   }
-  const shapes = ordered
-    .filter(drawn)
-    .map((s) => {
-      const overs = (patches.get(s.id) || []).sort((a, b) => rank.get(a.id) - rank.get(b.id));
-      const unders = coveredBy.get(s.id) || [];
-      const clip = overs.length || unders.length ? crossingClip(s, { over: overs, under: unders }, overlap) : '';
-      const mirror = reflected(s);
-      const refl = mirror.length ? reflectionMarkup(s, mirror, sc, overlap, { holes: unders }) : '';
-      const copies = overs.map((o) => {
-        const m = reflected(o);
-        return overCopy(o, s, sc) + (m.length ? reflectionMarkup(o, m, sc, overlap, { within: s }) : '');
-      }).join('');
-      return shapeMarkup(s, sc, clip) + refl + copies;
-    })
-    .join('');
+  const pieces = ordered.filter(drawn).map((s) => {
+    const overs = (patches.get(s.id) || []).sort((a, b) => rank.get(a.id) - rank.get(b.id));
+    const unders = coveredBy.get(s.id) || [];
+    const clip = overs.length || unders.length ? crossingClip(s, { over: overs, under: unders }, overlap) : '';
+    const mirror = reflected(s);
+    const refl = mirror.length ? reflectionMarkup(s, mirror, sc, overlap, { holes: unders }) : '';
+    const copies = overs.map((o) => {
+      const m = reflected(o);
+      return overCopy(o, s, sc, overlap) + (m.length ? reflectionMarkup(o, m, sc, overlap, { within: s }) : '');
+    }).join('');
+    const part = (pass) => shapeMarkup(s, sc, { extra: clip, pass, overlap });
+    return { s, all: () => part('all') + refl + copies, shadow: () => part('shadow'), face: () => part('face') + refl + copies };
+  });
+  // A run of level shapes in one layer draws every shadow before any face, so
+  // no shadow lands on a face of the run.
+  let shapes = '';
+  for (let i = 0; i < pieces.length;) {
+    let j = i + 1;
+    if (pieces[i].s.level) {
+      while (j < pieces.length && pieces[j].s.level && pieces[j].s.layer === pieces[i].s.layer) j++;
+    }
+    const run = pieces.slice(i, j);
+    shapes += run.length > 1 ? run.map((p) => p.shadow()).join('') + run.map((p) => p.face()).join('') : run[0].all();
+    i = j;
+  }
   return `<div class="ir-stage" style="${style}">${shapes}</div>`;
 }

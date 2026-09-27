@@ -5,7 +5,9 @@
 // - an outline made only of horizontal and vertical edges, which is split into
 //   the fewest overlapping rectangles that cover it exactly (a # becomes its
 //   four bars);
-// - several separate subpaths, each of which is one of the above.
+// - several separate subpaths, each of which is one of the above;
+// - a frame or ring: one of the first kind with an even, centered hole, or a
+//   closed one of the first kind drawn as a stroke.
 // Everything else is skipped and reported. Every path also goes into the
 // guide, drawn faintly over the canvas, so skipped parts can be rebuilt by
 // hand.
@@ -19,6 +21,8 @@ const ANDROID_NS = 'http://schemas.android.com/apk/res/android';
 // icon: it is centered at the size a launcher foreground usually gives a 24dp
 // icon (24 × 2.0625).
 const ICON_SIZE = 49.5;
+
+const AUTO_NAMES = { rect: 'Rectangle', ellipse: 'Ellipse', 'rect-hollow': 'Frame', 'ellipse-hollow': 'Ring' };
 
 const ANDROID_COLORS = { white: '#ffffff', black: '#000000', transparent: '#000000' };
 
@@ -90,13 +94,18 @@ function collectPaths(el, matrix, out, notes) {
       let fill = parseColor(attr(child, 'fillColor'), notes) || gradientColor(child, notes);
       const fillAlpha = parseFloat(attr(child, 'fillAlpha'));
       if (fill && Number.isFinite(fillAlpha)) fill = { ...fill, alpha: fill.alpha * fillAlpha };
-      const stroke = parseColor(attr(child, 'strokeColor'), notes);
+      let stroke = parseColor(attr(child, 'strokeColor'), notes);
+      const strokeAlpha = parseFloat(attr(child, 'strokeAlpha'));
+      if (stroke && Number.isFinite(strokeAlpha)) stroke = { ...stroke, alpha: stroke.alpha * strokeAlpha };
+      const strokeWidth = parseFloat(attr(child, 'strokeWidth')) || 0;
       out.push({
         name: attr(child, 'name'),
         d,
         matrix,
         fill: fill && fill.alpha > 0 ? fill : null,
-        stroke: stroke && stroke.alpha > 0 ? stroke : null,
+        stroke: stroke && stroke.alpha > 0 && strokeWidth > 0 ? stroke : null,
+        strokeWidth,
+        lineJoin: attr(child, 'strokeLineJoin').toLowerCase() || 'miter',
         evenOdd: attr(child, 'fillType').toLowerCase() === 'evenodd',
       });
     }
@@ -113,7 +122,7 @@ function subpaths(segs) {
   let curved = false;
   for (const s of segs) {
     if (s.c === 'M') {
-      cur = { pts: [[s.x, s.y]], curved: false };
+      cur = { pts: [[s.x, s.y]], curved: false, closed: false };
       out.push(cur);
       [x, y] = [s.x, s.y];
     } else if (s.c === 'L') {
@@ -131,11 +140,16 @@ function subpaths(segs) {
         ]);
       }
       [x, y] = [s.x, s.y];
+    } else if (s.c === 'Z' && cur) {
+      cur.closed = true;
     }
   }
   for (const sp of out) {
     const [a, b] = [sp.pts[0], sp.pts[sp.pts.length - 1]];
-    if (sp.pts.length > 1 && Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6) sp.pts.pop();
+    if (sp.pts.length > 1 && Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6) {
+      sp.pts.pop();
+      sp.closed = true;
+    }
   }
   return { list: out.filter((sp) => sp.pts.length > 2), curved };
 }
@@ -272,11 +286,43 @@ function rectilinearCover(list, evenOdd) {
 
 const containsBox = (a, b) => a.x0 <= b.x0 && a.y0 <= b.y0 && a.x1 >= b.x1 && a.y1 >= b.y1;
 
+// Two subpaths as one hollow shape: the inner one is the outer one inset by
+// the same amount on every side, and the fill rule leaves it empty.
+function frameOf(list, evenOdd) {
+  if (list.length !== 2) return null;
+  const [p, q] = list.map(simpleShape);
+  if (!p || !q) return null;
+  const [a, b, inner] = p.w >= q.w ? [p, q, list[1]] : [q, p, list[0]];
+  const wall = (a.w - b.w) / 2;
+  const tol = Math.max(0.06, Math.min(a.w, a.h) * 0.02);
+  if (a.kind !== b.kind || wall < tol) return null;
+  if ([b.x - a.x, b.y - a.y, (a.h - b.h) / 2].some((v) => Math.abs(v - wall) > tol)) return null;
+  if (a.kind === 'rect' && Math.abs(b.radius - Math.max(0, a.radius - wall)) > tol) return null;
+  const c = bboxOf(inner.pts);
+  const w = windingAt(list, (c.x0 + c.x1) / 2, (c.y0 + c.y1) / 2);
+  if (evenOdd ? w.crossings % 2 === 1 : w.wn !== 0) return null;
+  return { ...a, wall };
+}
+
+// A closed subpath drawn as a stroke of width sw: the outline grown by half
+// the stroke, with a wall as wide as the stroke. A miter or bevel join keeps a
+// sharp corner sharp; a round join rounds it by half the stroke.
+function strokeFrame(sp, sw, lineJoin) {
+  if (!sp.closed) return null;
+  const g = simpleShape(sp);
+  if (!g) return null;
+  const h = sw / 2;
+  const radius = g.kind === 'ellipse' ? 0 : g.radius > 0 || lineJoin === 'round' ? g.radius + h : 0;
+  return { kind: g.kind, x: g.x - h, y: g.y - h, w: g.w + sw, h: g.h + sw, radius, wall: sw };
+}
+
 function convert(list, curved, evenOdd) {
   if (list.length === 1) {
     const one = simpleShape(list[0]);
     if (one) return [one];
   }
+  const frame = frameOf(list, evenOdd);
+  if (frame) return [frame];
   if (!curved && axisAligned(list)) {
     const cover = rectilinearCover(list, evenOdd);
     if (cover && cover.length) return cover;
@@ -320,34 +366,38 @@ export function importVectorDrawable(text, fileName = 'vector') {
   const shapes = [];
   const guide = [];
   const skipped = [];
-  const counts = { rect: 0, ellipse: 0 };
+  const counts = {};
   paths.forEach((p, index) => {
     const segs = P.transform(P.parse(p.d), P.multiply(place, p.matrix));
-    const color = p.fill || p.stroke || { hex: '#9e9e9e', alpha: 1 };
-    guide.push({ d: P.serialize(segs), fill: color.hex, evenOdd: p.evenOdd });
+    const m = P.multiply(place, p.matrix);
+    const sw = p.strokeWidth * Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
+    const d = P.serialize(segs);
+    if (p.fill || !p.stroke) guide.push({ d, fill: (p.fill || { hex: '#9e9e9e' }).hex, evenOdd: p.evenOdd });
+    if (p.stroke) guide.push({ d, fill: p.stroke.hex, evenOdd: false, stroke: Math.round(sw * 1000) / 1000 });
     const label = p.name || `Path ${index + 1}`;
-    if (!p.fill) {
-      skipped.push(`${label} (stroke only)`);
-      return;
-    }
     const { list, curved } = subpaths(segs);
-    const parts = convert(list, curved, p.evenOdd);
-    if (!parts) {
-      skipped.push(label);
-      return;
-    }
-    parts.forEach((g, i) => {
+    const add = (parts, color) => parts.forEach((g, i) => {
       const round = (v) => Math.round(v * 1000) / 1000;
-      counts[g.kind] += 1;
-      const auto = `${g.kind === 'ellipse' ? 'Ellipse' : 'Rectangle'} ${counts[g.kind]}`;
-      let name = auto;
+      const kind = g.wall ? `${g.kind}-hollow` : g.kind;
+      counts[kind] = (counts[kind] || 0) + 1;
+      let name = `${AUTO_NAMES[kind]} ${counts[kind]}`;
       if (p.name) name = parts.length > 1 ? `${p.name} ${i + 1}` : p.name;
       shapes.push(newShape(g.kind, {
         name,
-        x: round(g.x), y: round(g.y), w: round(g.w), h: round(g.h), radius: round(g.radius),
+        x: round(g.x), y: round(g.y), w: round(g.w), h: round(g.h), radius: round(g.radius), wall: round(g.wall || 0),
         style: { ...defaultStyle(), color: color.hex, opacity: Math.round(color.alpha * 100) / 100 },
       }));
     });
+    if (p.fill) {
+      const parts = convert(list, curved, p.evenOdd);
+      if (parts) add(parts, p.fill);
+      else skipped.push(label);
+    }
+    if (p.stroke) {
+      const frames = list.map((sp) => strokeFrame(sp, sw, p.lineJoin));
+      if (list.length && frames.every(Boolean)) add(frames, p.stroke);
+      else skipped.push(`${label} (stroke)`);
+    }
   });
   const name = fileName.replace(/\.[^.]+$/, '');
   return { shapes, guide: { name, paths: guide, visible: true }, skipped, notes: [...notes] };
