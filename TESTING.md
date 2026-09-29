@@ -80,7 +80,7 @@ The automated cases render through the export path only. To check that the edito
 
 ## Baseline
 
-Measured on 2026-09-29 at commit `4b56724`, Chrome 154 on Linux: 38 automated cases pass, **CR-3 fails** for frosted glass and jelly (see the case), and **MT-2 skips** until reference images are approved.
+Measured on 2026-09-29, Chrome 154 on Linux: all 40 automated cases with a target pass, and **MT-2 skips** until reference images are approved.
 
 ## App shell
 
@@ -207,14 +207,15 @@ Measured on 2026-09-29 at commit `4b56724`, Chrome 154 on Linux: 38 automated ca
 
 - [ ] **CR-1** An opaque crossing looks like painting the shape on top. *Auto, E near:* A crossing over B against B painted after A. What remains are single-pixel lines along the edges (about 0.13% of pixels).
 - [ ] **CR-2** The shape on top keeps its own face, untouched by the one below. *Auto, E near.*
-- [ ] **CR-3** A see-through shape on top looks right inside the overlap: opacity 0.5, frosted glass, jelly. *Auto, E near.* **Known failure at the baseline:** glass (mean 1.32) and jelly (mean 1.05) differ from painting them last. The crossing leaves B's shadow out wherever the glass lies outside B, so that shadow is missing under the glass, and the glass's blur also misses B next to it. Outside the overlap the difference is larger. Opacity 0.5 passes exactly.
+- [ ] **CR-3** A see-through shape on top (opacity 0.5, frosted glass, jelly) looks like painting it on top, with the shape below and its shadow seen through it. *Auto, E near*, inside the overlap and on the whole canvas, also for glass crossing over two shapes and for glass lifted past a shape that stays on top of it. Known small difference in that last case: right next to the shape on top, the glass's blur picks up that shape's color (up to 43 levels in a narrow band), so the part compares only away from it.
 - [ ] **CR-4** The part of a shape on top has the same shading as the rest of it. *Auto, P:* the # design, with the lower horizontal bar crossing over the right vertical one while the bars stacked between them shade it; the step in color across the patch's edges is at most 8 levels. The renderer before commit `4b56724` steps by 17 and 31.
 - [ ] **CR-5** Three shapes weave: A over B, B over C, C over A. *Auto, P:* at each overlap, the color on top is the right shape's.
 - [ ] **CR-6** Several shapes cross over one shape, also where they overlap each other. *Auto, P.*
 - [ ] **CR-7** A shape crossing over a frame stays clear of the frame's hole shadow. *Auto, E near.*
 - [ ] **CR-8** Reflections respect crossings: a glossy shape reflects a shape that crosses over it, and nothing when that shape is under it. *Auto, P and E exact.*
-- [ ] **CR-9** Crossings UI. Select a shape that overlaps others, then select two overlapping shapes. *Target:* the Crossings section lists every shape it crosses with Over/Under; with two selected, only their crossing; choosing Over or Under updates the canvas; clicking the crossing on the canvas selects the shape on top.
-- [ ] **CR-10** No seams. Import `tests/import-fixture.xml`, make the lower # bar cross over the right one, and look at 1600%. Also build a weave with a translucent and a glass shape. *Target, L:* no hairline, light line or lighter patch along any crossing edge.
+- [ ] **CR-9** A shape crossing over two shapes gets no shadow from the first on its part over the second. *Auto, E near.*
+- [ ] **CR-10** Crossings UI. Select a shape that overlaps others, then select two overlapping shapes. *Target:* the Crossings section lists every shape it crosses with Over/Under; with two selected, only their crossing; choosing Over or Under updates the canvas; clicking the crossing on the canvas selects the shape on top.
+- [ ] **CR-11** No seams. Import `tests/import-fixture.xml`, make the lower # bar cross over the right one, and look at 1600%. Also build a weave with a translucent and a glass shape. *Target, L:* no hairline, light line or lighter patch along any crossing edge.
 
 ## Materials
 

@@ -225,13 +225,36 @@ check('CR-2', "The shape on top keeps its own face, untouched by the one below",
   return [near("A's face vs A alone", vt.compare(await vt.render(c), await vt.render(alone), { x: 21, y: 45, w: 66, h: 18 }))];
 });
 
-check('CR-3', 'A see-through shape on top looks right inside the overlap', async () => {
+// A bar A with two bars B and C crossing it, B left and C right; C paints last.
+const bars = (styleA = {}) => vt.scene(
+  vt.shape('rect', { name: 'A', x: 10, y: 44, w: 88, h: 20, radius: 4 }, { color: '#d04a4a', ...styleA }),
+  vt.shape('rect', { name: 'B', x: 22, y: 20, w: 16, h: 68, radius: 4 }, { color: '#4a7bd0' }),
+  vt.shape('rect', { name: 'C', x: 70, y: 20, w: 16, h: 68, radius: 4 }, { color: '#40a060' }),
+);
+
+check('CR-3', 'A see-through shape on top looks like painting it on top, with what lies under it seen through it', async () => {
   const inside = { x: 45, y: 45, w: 18, h: 18 };
   const out = [];
   for (const [label, style] of [['opacity 0.5', { opacity: 0.5 }], ['frosted glass', { material: 'glass' }], ['jelly', { material: 'jelly' }]]) {
     const [c, r] = vt.crossed(vt.pair(style));
-    out.push(near(label, vt.compare(await vt.render(c), await vt.render(r), inside)));
+    const a = await vt.render(c);
+    const b = await vt.render(r);
+    out.push(near(`${label}: inside the overlap`, vt.compare(a, b, inside)));
+    out.push(near(`${label}: whole canvas`, vt.compare(a, b)));
   }
+  const two = bars({ material: 'glass' });
+  two.crossings = [{ over: two.shapes[0].id, under: two.shapes[1].id }, { over: two.shapes[0].id, under: two.shapes[2].id }];
+  const twoRef = structuredClone(two);
+  twoRef.crossings = [];
+  twoRef.shapes.push(twoRef.shapes.shift());
+  out.push(near('glass over two shapes: whole canvas', vt.compare(await vt.render(two), await vt.render(twoRef))));
+  // Glass A over C only: B, painted between them, stays on top of A.
+  const past = bars({ material: 'glass' });
+  past.crossings = [{ over: past.shapes[0].id, under: past.shapes[2].id }];
+  const pastRef = structuredClone(past);
+  pastRef.crossings = [];
+  pastRef.shapes = [pastRef.shapes[2], pastRef.shapes[0], pastRef.shapes[1]];
+  out.push(near('glass lifted past a shape on top of it: away from that shape', vt.compare(await vt.render(past), await vt.render(pastRef), { x: 50, y: 0, w: 58, h: 108 })));
   return out;
 });
 
@@ -320,6 +343,22 @@ check('CR-8', 'Reflections respect crossings', async () => {
   return [
     differs('A crosses over G: G reflects A', vt.compare(await vt.render(scene(1, true)), await vt.render(scene(0, true)), face), 0.3),
     exact('A under G: nothing to reflect', vt.compare(await vt.render(scene(1, false)), await vt.render(scene(0, false)), face)),
+  ];
+});
+
+check('CR-9', 'A shape crossing over two shapes gets no shadow from the first on its part over the second', async () => {
+  // B close enough to C that B's shadow would reach A's part over C.
+  const v = bars();
+  Object.assign(v.shapes[1], { x: 50, w: 12 });
+  v.crossings = [{ over: v.shapes[0].id, under: v.shapes[1].id }, { over: v.shapes[0].id, under: v.shapes[2].id }];
+  const ref = structuredClone(v);
+  ref.crossings = [];
+  ref.shapes.push(ref.shapes.shift());
+  const a = await vt.render(v);
+  const b = await vt.render(ref);
+  return [
+    near("A's part over C", vt.compare(a, b, { x: 71, y: 45, w: 14, h: 18 })),
+    near('whole canvas', vt.compare(a, b)),
   ];
 });
 

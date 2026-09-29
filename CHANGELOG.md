@@ -12,6 +12,7 @@ into saved project files.
 ### Fixed
 
 - Where a shape crosses over a shape higher in the stacking order, the part on top no longer shows as a lighter patch. It now gets the shadows of the shapes stacked between the two, like the rest of the shape.
+- A frosted glass, jelly or translucent shape crossing over another shape now shows that shape's shadow through it, and its frost blurs the shape beside it, as when it simply lies on top.
 
 ## [2.0.0] - 2026-09-27
 

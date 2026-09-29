@@ -670,9 +670,8 @@ function inkReach(shape) {
 
 const ring = (pts) => `M${pts.map(([x, y]) => `${num(x)} ${num(y)}`).join('L')}Z`;
 
-// Where `over` crosses `under` against the paint order, `over` is put on top
-// without painting anything twice, so translucent shapes (glass, opacity) look
-// the same as at a natural crossing:
+// Where an opaque `over` crosses `under` against the paint order, `over` is
+// put on top without painting anything twice:
 // - a copy of `over`, drawn right after `under` and clipped to `under`'s
 //   outline, shows `over`'s body and its shadow on `under` (overCopy);
 // - `under` gets a hole where `over` lies outside it, so `under`'s shadow
@@ -680,13 +679,14 @@ const ring = (pts) => `M${pts.map(([x, y]) => `${num(x)} ${num(y)}`).join('L')}Z
 //   overlap;
 // - the original `over` gets a hole where they overlap, which the copy covers.
 // Shapes that paint after `under` still cover all of it.
-// Along `under`'s edge, a band `overlap` wide is painted by both. An opaque
-// `over` puts it outside `under`: the copy reaches past the edge and covers
-// its anti-aliased pixels, which would otherwise show `under`'s rim as a line.
-// A see-through `over` puts it inside, where `under` hides the original and
-// the band isn't seen twice. Shadows and glows are see-through, so the copy's
-// stop at `under`'s outline: past it they would land on the original faces
-// where the copy's face only partly covers them, and show as a dark line.
+// Along `under`'s edge, a band `overlap` wide is painted by both: the copy
+// reaches past the edge and covers its anti-aliased pixels, which would
+// otherwise show `under`'s rim as a line. Shadows and glows are see-through,
+// so the copy's stop at `under`'s outline: past it they would land on the
+// original faces where the copy's face only partly covers them, and show as a
+// dark line.
+// A see-through `over` is lifted instead (see stageMarkup). It is only copied
+// like this in a layer export that leaves it out, where no band is needed.
 // Through a hollow shape's hole, the shape on the other side shows as it would
 // with no crossing, except that a hollow `under` casts no hole shadow on `over`.
 function overCopy(over, under, scene, overlap, pass = 'all') {
@@ -729,10 +729,11 @@ function maskedKeep(shape, keep, hole, pass, overlap) {
 
 // Along every cut edge, `overlap` canvas units (about 1.25 output pixels) are
 // painted from both sides: the cutouts for shapes over this one are inset by
-// it, and so are those for shapes this one crosses over, unless a copy of this
-// shape reaches past their edge instead (overCopy). Two anti-aliased edges
-// meeting exactly would let the background show through as a hairline.
-// holes: { over: shapes drawn over this one, under: shapes this one is drawn over }
+// it, and the copy of this shape over the shapes it crosses reaches past their
+// edge by it (overCopy). Two anti-aliased edges meeting exactly would let the
+// background show through as a hairline.
+// holes: { over: opaque shapes copied over this one, under: shapes this opaque
+// one is copied over }
 // Returns the region the shape keeps and the one its hole wrapper keeps, which
 // also leaves out the shapes over it inside its hole, so its hole shadow and
 // glow don't land on them.
@@ -750,9 +751,7 @@ function crossingClip(shape, holes, overlap) {
   }
   for (const under of holes.under) {
     const shared = clipPolygon(outline(shape), outline(under));
-    if (shared.length <= 2) continue;
-    const inset = seeThrough(shape) ? overlap : 0;
-    cut = join(cut, meet([insetPolygon(shared, inset)], solid(under, -inset)));
+    if (shared.length > 2) cut = join(cut, meet([shared], solid(under, 0)));
   }
   return { keep: minus(box, cut), holeKeep: minus(box, join(cut, inHole)) };
 }
@@ -769,7 +768,8 @@ function crossingClip(shape, holes, overlap) {
 // mix-blend-mode outside its clip-path.
 // holes: shapes glossy is put over by a crossing, which paint over its
 // reflections there. within: the shape a crossing copy of glossy is clipped to.
-function reflectionMarkup(glossy, sources, scene, overlap, { holes = [], within = null } = {}) {
+// keep: the region this part of a lifted glossy shape paints.
+function reflectionMarkup(glossy, sources, scene, overlap, { holes = [], within = null, keep = null } = {}) {
   const st = glossy.style;
   const r = reflectivity(st);
   const [dx, dy] = st.reflectLock ? [scene.lightX, scene.lightY] : [st.reflectX, st.reflectY];
@@ -789,7 +789,9 @@ function reflectionMarkup(glossy, sources, scene, overlap, { holes = [], within 
     const shared = clipPolygon(outline(glossy), outline(u));
     if (shared.length > 2) covered = join(covered, [insetPolygon(shared, overlap)]);
   }
-  const d = minus([within ? clipPolygon(inner, outline(within)) : inner], covered).map((p) => ring(toBox(glossy, p))).join('');
+  let area = [within ? clipPolygon(inner, outline(within)) : inner];
+  if (keep) area = meet(area, keep);
+  const d = minus(area, covered).map((p) => ring(toBox(glossy, p))).join('') || 'M0 0Z';
   const f = num(Math.min(REFLECT_FADE, glossy.w / 4, glossy.h / 4));
   const fade = glossy.kind === 'ellipse'
     ? `radial-gradient(closest-side,#000 calc(100% - ${f}px),transparent)`
@@ -879,10 +881,39 @@ export function stageMarkup(variant, { layer = 'all', transparent = false, pxPer
     return out;
   };
   const leveled = (group, shadow, face, all) => (group.length > 1 ? group.map(shadow).join('') + group.map(face).join('') : all(group[0]));
+  // A see-through `over` shows what lies under it, `under`'s shadow included,
+  // and a copy clipped to `under` would leave that shadow out and blur a
+  // backdrop without `under` in it. So it is lifted instead: drawn once, right
+  // after the last shape it crosses over, with those shapes' shadows under it.
+  // Where a shape painted between them lies on it, the original stays, under
+  // that shape. face: what the lifted drawing covers of `over`; its shadow and
+  // hole shadow still land only on the shapes it crosses over.
+  const lifted = new Map();
+  for (const [oid, unders] of coveredBy) {
+    const o = byId.get(oid);
+    if (!drawn(o) || !seeThrough(o)) continue;
+    const last = unders.reduce((a, b) => (rank.get(b.id) > rank.get(a.id) ? b : a));
+    const crossed = new Set(unders.map((u) => u.id));
+    let above = [];
+    for (const m of list) {
+      const r = rank.get(m.id);
+      if (r <= rank.get(oid) || r >= rank.get(last.id) || crossed.has(m.id)) continue;
+      if (meet([outline(m)], [outline(o)]).length) above = join(above, solid(m, 0));
+    }
+    const face = minus(solid(o, 0), above);
+    const onUnders = minus(unders.reduce((r, u) => join(r, solid(u, 0)), []), above);
+    lifted.set(oid, { last, crossed, face, keep: join(face, onUnders), holeKeep: onUnders });
+  }
+  const copied = (overs) => overs.filter((o) => !lifted.has(o.id));
   const clips = new Map(list.map((s) => {
-    const overs = patches.get(s.id) || [];
-    const unders = coveredBy.get(s.id) || [];
-    return [s.id, overs.length || unders.length ? crossingClip(s, { over: overs, under: unders }, overlap) : {}];
+    const overs = copied(patches.get(s.id) || []);
+    const unders = lifted.has(s.id) ? [] : coveredBy.get(s.id) || [];
+    let clip = overs.length || unders.length ? crossingClip(s, { over: overs, under: unders }, overlap) : {};
+    if (lifted.has(s.id)) {
+      const box = [outline(s, inkReach(s))];
+      clip = { keep: minus(clip.keep || box, lifted.get(s.id).face), holeKeep: clip.holeKeep || box };
+    }
+    return [s.id, clip];
   }));
   // Shapes painted between `over` and `under` cast their shadows and glow on
   // `over`, but would miss its copy, which paints after them, and leave it
@@ -896,12 +927,15 @@ export function stageMarkup(variant, { layer = 'all', transparent = false, pxPer
   for (const [uid, overs] of patches) {
     const u = byId.get(uid);
     for (const o of overs) {
-      const shared = meet(solid(u, 0), solid(o, 0));
-      const face = seeThrough(o) ? shared : meet(solid(u, overlap), solid(o, 0));
+      const lift = lifted.get(o.id);
+      if (lift && lift.last !== u) continue;
+      const crossed = lift ? lift.crossed : new Set((coveredBy.get(o.id) || []).map((x) => x.id));
+      const shared = lift ? lift.face : meet(solid(u, 0), solid(o, 0));
+      const face = lift || seeThrough(o) ? shared : meet(solid(u, overlap), solid(o, 0));
       const casts = [];
       for (const m of list) {
         const r = rank.get(m.id);
-        if (m === u || r <= rank.get(o.id) || r >= rank.get(u.id) || sameRun(m, o)) continue;
+        if (crossed.has(m.id) || r <= rank.get(o.id) || r >= rank.get(u.id) || sameRun(m, o)) continue;
         const reach = [outline(m, inkReach(m))];
         const region = meet(reach, face);
         if (!region.length) continue;
@@ -913,8 +947,11 @@ export function stageMarkup(variant, { layer = 'all', transparent = false, pxPer
     }
   }
   const pieces = list.map((s) => {
-    const overs = (patches.get(s.id) || []).sort((a, b) => rank.get(a.id) - rank.get(b.id));
-    const unders = coveredBy.get(s.id) || [];
+    const overs = (patches.get(s.id) || [])
+      .filter((o) => !lifted.has(o.id) || lifted.get(o.id).last === s)
+      .sort((a, b) => rank.get(a.id) - rank.get(b.id));
+    const lift = lifted.get(s.id);
+    const unders = lift ? [] : coveredBy.get(s.id) || [];
     let clip = clips.get(s.id);
     if (castCut.has(s.id)) {
       const box = [outline(s, inkReach(s))];
@@ -922,11 +959,15 @@ export function stageMarkup(variant, { layer = 'all', transparent = false, pxPer
       clip = { keep: minus(clip.keep || box, cut), holeKeep: minus(clip.holeKeep || box, cut) };
     }
     const mirror = reflected(s);
-    const refl = mirror.length ? reflectionMarkup(s, mirror, sc, overlap, { holes: unders }) : '';
+    const refl = mirror.length ? reflectionMarkup(s, mirror, sc, overlap, { holes: unders, keep: lift ? minus([outline(s)], lift.face) : null }) : '';
     const copy = (pass) => (o) => {
       const m = pass !== 'shadow' && reflected(o);
-      return overCopy(o, s, sc, overlap, pass) + (m && m.length ? reflectionMarkup(o, m, sc, overlap, { within: s }) : '')
-        + (pass !== 'shadow' ? castOnCopy.get(`${o.id}|${s.id}`) : '');
+      const up = lifted.get(o.id);
+      const body = up
+        ? shapeMarkup(o, sc, { keep: up.keep, holeKeep: up.holeKeep, pass, overlap })
+        : overCopy(o, s, sc, overlap, pass);
+      const glint = m && m.length ? reflectionMarkup(o, m, sc, overlap, up ? { keep: up.face } : { within: s }) : '';
+      return body + glint + (pass !== 'shadow' ? castOnCopy.get(`${o.id}|${s.id}`) : '');
     };
     const copies = groups(overs, (o) => o).map((g) => leveled(g, copy('shadow'), copy('face'), copy('all'))).join('');
     const part = (pass) => shapeMarkup(s, sc, { ...clip, pass, overlap });
