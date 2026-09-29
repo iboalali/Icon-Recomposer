@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+  <path android:name="plain" android:fillColor="#FF3366CC" android:pathData="M10,10H30V30H10Z"/>
+  <path android:name="rounded" android:fillColor="#FFCC6633" android:pathData="M44,10H64A4,4 0 0 1 68,14V26A4,4 0 0 1 64,30H44A4,4 0 0 1 40,26V14A4,4 0 0 1 44,10Z"/>
+  <path android:name="circle" android:fillColor="#8033AA55" android:pathData="M88,20m-10,0a10,10 0 1,0 20,0a10,10 0 1,0 -20,0"/>
+  <path android:name="ellipse" android:fillColor="#FF884499" android:pathData="M10,48a14,8 0 1,0 28,0a14,8 0 1,0 -28,0"/>
+  <path android:name="hash" android:fillColor="#FF222222" android:pathData="M46,38H50V42H54V38H58V42H62V46H58V50H62V54H58V58H54V54H50V58H46V54H42V50H46V46H42V42H46ZM50,46V50H54V46Z"/>
+  <path android:name="frame" android:fillType="evenOdd" android:fillColor="#FF1188AA" android:pathData="M70,36H98V64H70ZM74,40V60H94V40Z"/>
+  <path android:name="stroked-ring" android:strokeColor="#FFAA2222" android:strokeWidth="3" android:pathData="M24,78m-12,0a12,12 0 1,0 24,0a12,12 0 1,0 -24,0"/>
+  <path android:name="curve" android:fillColor="#FF444444" android:pathData="M50,70C60,60 70,90 80,70L84,96L50,96Z"/>
+  <path android:name="open-stroke" android:strokeColor="#FF000000" android:strokeWidth="2" android:pathData="M86,72L100,86L90,100"/>
+</vector>

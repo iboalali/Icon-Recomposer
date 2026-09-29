@@ -85,6 +85,6 @@ Serve the directory (ES modules need `http://`) and open `index.html`:
 python3 -m http.server
 ```
 
-No committed test suite. Verify in the served page with headless Chrome (`google-chrome --headless=new --screenshot` / `--dump-dom`) or a Chrome DevTools Protocol script (`Input.dispatchMouseEvent`, `Runtime.evaluate`), reading results from the autosaved document in `localStorage` (`icon-recomposer-2/doc`).
+`TESTING.md` lists every feature as a test case. The automated ones render scenes through the export path and compare them against a target (an equivalent scene, a measured property or an approved image in `captures/golden/`): in the editor's DevTools console, `await import('/tests/checks.js')` then `await vt.runAll()`. For anything else, verify in the served page with headless Chrome (`google-chrome --headless=new --screenshot` / `--dump-dom`) or a Chrome DevTools Protocol script (`Input.dispatchMouseEvent`, `Runtime.evaluate`), reading results from the autosaved document in `localStorage` (`icon-recomposer-2/doc`).
 
 Deployment: GitHub Pages from `main` (root) at https://iboalali.com/Icon-Recomposer/. `Cache-Control: max-age=600`, so returning visitors can take up to 10 minutes to see a deploy.
