@@ -9,6 +9,10 @@ into saved project files.
 
 ## [Unreleased]
 
+### Fixed
+
+- Where a shape crosses over a shape higher in the stacking order, the part on top no longer shows as a lighter patch. It now gets the shadows of the shapes stacked between the two, like the rest of the shape.
+
 ## [2.0.0] - 2026-09-27
 
 Version 2 is a complete rewrite. Icon Recomposer is now an editor for lit, layered app icons: you build an icon from shapes, give each one a material under one scene light, keep several variants side by side, and export them as PNG for Android and the Play Store.
